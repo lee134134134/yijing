@@ -1,2 +1,7 @@
 /pdf/
 /.idea/
+/node_modules/
+/dist/
+/.env
+/chroma_data/
+/data/
