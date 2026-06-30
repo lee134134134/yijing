@@ -1,8 +1,7 @@
-import { ChatOpenAI } from "@langchain/openai";
-import { PromptTemplate } from "@langchain/core/prompts";
 import { StringOutputParser } from "@langchain/core/output_parsers";
+import { PromptTemplate } from "@langchain/core/prompts";
+import { ChatOpenAI } from "@langchain/openai";
 import { config } from "../config.js";
-import { searchKnowledge, searchByDomain } from "../vectorstore/chroma.js";
 import type { KnowledgeDocument, QueryType } from "../types.js";
 
 /** 获取 Chat 模型实例 */
@@ -18,7 +17,7 @@ export function getChatModel(): ChatOpenAI {
 }
 
 /** 格式化检索到的文档为上下文文本 */
-function formatDocsAsContext(docs: KnowledgeDocument[]): string {
+function _formatDocsAsContext(docs: KnowledgeDocument[]): string {
   return docs
     .map((doc, i) => {
       const meta = doc.metadata;
@@ -31,7 +30,7 @@ function formatDocsAsContext(docs: KnowledgeDocument[]): string {
 }
 
 /** 通用问答 Prompt */
-const QA_PROMPT = PromptTemplate.fromTemplate(`
+const _QA_PROMPT = PromptTemplate.fromTemplate(`
 你是一位精通倪海厦中医命理知识体系的中医/命理专家。请基于提供的知识库内容回答用户问题。
 
 ## 回答要求
@@ -68,28 +67,6 @@ const CLASSIFY_PROMPT = PromptTemplate.fromTemplate(`
 `);
 
 /**
- * 直接 RAG 问答（无 Agent 的简化版）
- */
-export async function simpleRagQuery(
-  question: string,
-  topK: number = config.retrievalTopK
-): Promise<string> {
-  // 1. 检索
-  const docs = await searchKnowledge(question, topK);
-  const context = formatDocsAsContext(docs);
-
-  // 2. 生成
-  const llm = getChatModel();
-  const chain = QA_PROMPT.pipe(llm).pipe(new StringOutputParser());
-  const response = await chain.invoke({
-    context,
-    question,
-  });
-
-  return response;
-}
-
-/**
  * 分类查询类型
  */
 export async function classifyQuery(question: string): Promise<QueryType> {
@@ -98,42 +75,4 @@ export async function classifyQuery(question: string): Promise<QueryType> {
   const result = await chain.invoke({ question });
   const cleanType = result.trim().toLowerCase() as QueryType;
   return cleanType;
-}
-
-/**
- * 带领域过滤的 RAG 查询
- */
-export async function domainSpecificRagQuery(
-  question: string,
-  domain: string
-): Promise<string> {
-  const docs = await searchByDomain(question, domain, config.retrievalTopK);
-  const context = formatDocsAsContext(docs);
-
-  const llm = getChatModel();
-  const domainPrompt = PromptTemplate.fromTemplate(`
-你是一位精通{domain}的专家。请基于提供的知识库内容回答用户问题。
-
-## 知识库参考内容
-{context}
-
-## 用户问题
-{question}
-
-## 回答要求
-1. 严格基于提供的知识库内容
-2. 引用具体来源
-3. 涉及诊断或健康建议时，必须加免责声明
-
-## 回答
-`);
-
-  const chain = domainPrompt.pipe(llm).pipe(new StringOutputParser());
-  const response = await chain.invoke({
-    domain,
-    context,
-    question,
-  });
-
-  return response;
 }

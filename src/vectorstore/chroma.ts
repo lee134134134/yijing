@@ -1,20 +1,18 @@
 /**
- * 本地向量存储 — 基于字符 n-gram 的中文语义检索
+ * 本地向量存储 — 基于字符 n-gram 的中文语义检索 + BM25 混合搜索
  *
- * 原理：对中文文本计算字符级别 2-gram/3-gram 签名，
- * 通过 Jaccard 相似度实现语义检索，无需外部 Embedding 服务。
+ * 原理：结合 n-gram Jaccard 相似度与 BM25 关键词匹配，
+ *       通过 Reciprocal Rank Fusion (RRF) 融合排序结果。
  *
  * 存储结构:
  *   data/
  *     documents.json  - 文档内容 + 元数据
- *
- * 可替换方案：当有 Embedding 服务可用时，只需替换相似度计算
- * （将 ngramSimilarity 替换为余弦相似度）
  */
 
-import fs from "fs";
-import path from "path";
+import fs from "node:fs";
+import path from "node:path";
 import { Document } from "@langchain/core/documents";
+import MiniSearch from "minisearch";
 import { config } from "../config.js";
 import type { KnowledgeDocument, KnowledgeMetadata } from "../types.js";
 
@@ -97,6 +95,96 @@ function saveDocuments(docs: StoredDocument[]) {
 }
 
 // ========================================
+// BM25 全文索引（lazy init）
+// ========================================
+
+let _miniSearch: MiniSearch | null = null;
+
+function buildMiniSearchIndex(docs: StoredDocument[]): MiniSearch {
+  const ms = new MiniSearch({
+    fields: ["content"],
+    storeFields: ["source", "domain", "h1", "h2", "h3"],
+    tokenize: (text) => {
+      // 中文：按字符切分；英文/数字：按空格
+      const tokens: string[] = [];
+      for (const ch of text) {
+        if (/[\u4e00-\u9fff\u3400-\u4dbf]/.test(ch)) {
+          tokens.push(ch);
+        }
+      }
+      // 同时保留英文单词
+      const engWords = text.split(/[^a-zA-Z0-9]+/).filter(Boolean);
+      return [...tokens, ...engWords.map((w) => w.toLowerCase())];
+    },
+    processTerm: (term) => term.toLowerCase(),
+    searchOptions: {
+      prefix: true,
+      fuzzy: 0.2,
+      boost: { content: 2 },
+    },
+  });
+  for (const doc of docs) {
+    ms.add({
+      id: doc.id,
+      content: doc.content.slice(0, 2000),
+      source: doc.metadata.source || "",
+      domain: doc.metadata.domain || "",
+      h1: doc.metadata.h1 || "",
+      h2: doc.metadata.h2 || "",
+      h3: doc.metadata.h3 || "",
+    });
+  }
+  return ms;
+}
+
+function getMiniSearch(docs: StoredDocument[]): MiniSearch {
+  if (!_miniSearch) {
+    _miniSearch = buildMiniSearchIndex(docs);
+  }
+  return _miniSearch;
+}
+
+function keywordSearch(
+  query: string,
+  docs: StoredDocument[],
+  topK: number,
+): Array<{ doc: StoredDocument; score: number }> {
+  const ms = getMiniSearch(docs);
+  const results = ms.search(query, { prefix: true, fuzzy: 0.2, boost: { content: 2 } });
+  const docMap = new Map(docs.map((d) => [d.id, d]));
+  return results
+    .filter((r) => docMap.has(r.id))
+    .slice(0, topK)
+    .map((r) => ({ doc: docMap.get(r.id)!, score: r.score }));
+}
+
+function rrfFuse(
+  vectorResults: Array<{ doc: StoredDocument; score: number }>,
+  keywordResults: Array<{ doc: StoredDocument; score: number }>,
+  topK: number,
+  k: number = 60,
+): Array<{ doc: StoredDocument; score: number }> {
+  const combined = new Map<string, { doc: StoredDocument; score: number }>();
+
+  vectorResults.forEach((entry, i) => {
+    combined.set(entry.doc.id, { doc: entry.doc, score: 1 / (k + i) });
+  });
+
+  keywordResults.forEach((entry, i) => {
+    const existing = combined.get(entry.doc.id);
+    if (existing) {
+      existing.score += 1 / (k + i);
+    } else {
+      combined.set(entry.doc.id, { doc: entry.doc, score: 1 / (k + i) });
+    }
+  });
+
+  return Array.from(combined.values())
+    .sort((a, b) => b.score - a.score)
+    .slice(0, topK);
+}
+
+// ========================================
 // 相似度评分
 // ========================================
 
@@ -109,8 +197,11 @@ function scoreRelevance(query: string, doc: StoredDocument): number {
   const charScore = jaccardSimilarity(qSig.chars, dSig.chars);
 
   const titleBonus =
-    (doc.metadata.h2 && query.includes(doc.metadata.h2)) ? 0.15 :
-    (doc.metadata.h1 && query.includes(doc.metadata.h1)) ? 0.1 : 0;
+    doc.metadata.h2 && query.includes(doc.metadata.h2)
+      ? 0.15
+      : doc.metadata.h1 && query.includes(doc.metadata.h1)
+        ? 0.1
+        : 0;
 
   const domainBonus = query.includes(doc.metadata.domain) ? 0.1 : 0;
 
@@ -136,30 +227,52 @@ export async function clearAll(): Promise<void> {
 }
 
 export async function searchKnowledge(
-  query: string, topK: number = config.retrievalTopK
+  query: string,
+  topK: number = config.retrievalTopK,
 ): Promise<KnowledgeDocument[]> {
   const stored = loadDocuments();
   if (stored.length === 0) return [];
 
-  const scored = stored
+  const vectorResults = stored
     .map((doc) => ({ doc, score: scoreRelevance(query, doc) }))
     .sort((a, b) => b.score - a.score)
-    .slice(0, topK);
+    .slice(0, topK * 2);
 
-  return scored.map((entry) =>
-    new Document<KnowledgeMetadata>({ pageContent: entry.doc.content, metadata: entry.doc.metadata })
-  );
+  if (config.enableHybridSearch) {
+    const kwResults = keywordSearch(query, stored, topK * 2);
+    const fused = rrfFuse(vectorResults, kwResults, topK, config.hybridSearchRrfK);
+    return fused.map(
+      (entry) => new Document<KnowledgeMetadata>({ pageContent: entry.doc.content, metadata: entry.doc.metadata }),
+    );
+  }
+
+  return vectorResults
+    .slice(0, topK)
+    .map((entry) => new Document<KnowledgeMetadata>({ pageContent: entry.doc.content, metadata: entry.doc.metadata }));
 }
 
 export async function searchByDomain(
-  query: string, domain: string, topK: number = config.retrievalTopK
+  query: string,
+  domain: string,
+  topK: number = config.retrievalTopK,
 ): Promise<KnowledgeDocument[]> {
   const stored = loadDocuments().filter((d) => d.metadata.domain === domain);
   if (stored.length === 0) return [];
 
-  return stored
+  const vectorResults = stored
     .map((doc) => ({ doc, score: scoreRelevance(query, doc) }))
     .sort((a, b) => b.score - a.score)
+    .slice(0, topK * 2);
+
+  if (config.enableHybridSearch) {
+    const kwResults = keywordSearch(query, stored, topK * 2);
+    const fused = rrfFuse(vectorResults, kwResults, topK, config.hybridSearchRrfK);
+    return fused.map(
+      (entry) => new Document<KnowledgeMetadata>({ pageContent: entry.doc.content, metadata: entry.doc.metadata }),
+    );
+  }
+
+  return vectorResults
     .slice(0, topK)
     .map((entry) => new Document<KnowledgeMetadata>({ pageContent: entry.doc.content, metadata: entry.doc.metadata }));
 }

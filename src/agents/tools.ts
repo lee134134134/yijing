@@ -1,7 +1,7 @@
 import { DynamicTool } from "langchain/tools";
-import { searchKnowledge, searchByDomain } from "../vectorstore/chroma.js";
 import { classifyQuery } from "../rag/chain.js";
 import type { KnowledgeDocument } from "../types.js";
+import { searchByDomain, searchKnowledge } from "../vectorstore/chroma.js";
 
 /**
  * 知识库搜索工具
@@ -22,7 +22,7 @@ export const knowledgeSearchTool = new DynamicTool({
           `[${i + 1}] 来源: ${doc.metadata.source}${
             doc.metadata.h2 ? ` > ${doc.metadata.h2}` : ""
           } | 领域: ${doc.metadata.domain}
-${doc.pageContent.slice(0, 800)}`
+${doc.pageContent.slice(0, 800)}`,
       )
       .join("\n\n---\n\n");
   },
@@ -49,10 +49,8 @@ export const domainSearchTool = new DynamicTool({
     return docs
       .map(
         (doc, i) =>
-          `[${i + 1}] ${doc.metadata.source}${
-            doc.metadata.h2 ? ` > ${doc.metadata.h2}` : ""
-          }
-${doc.pageContent.slice(0, 800)}`
+          `[${i + 1}] ${doc.metadata.source}${doc.metadata.h2 ? ` > ${doc.metadata.h2}` : ""}
+${doc.pageContent.slice(0, 800)}`,
       )
       .join("\n\n---\n\n");
   },
@@ -81,12 +79,10 @@ export function formatRetrievedDocs(docs: KnowledgeDocument[]): string {
       (doc, i) =>
         `【参考 ${i + 1}】
 来源: ${doc.metadata.source}
-章节: ${[doc.metadata.h1, doc.metadata.h2, doc.metadata.h3]
-  .filter(Boolean)
-  .join(" > ")}
+章节: ${[doc.metadata.h1, doc.metadata.h2, doc.metadata.h3].filter(Boolean).join(" > ")}
 领域: ${doc.metadata.domain}
 
-${doc.pageContent}`
+${doc.pageContent}`,
     )
     .join("\n\n");
 }

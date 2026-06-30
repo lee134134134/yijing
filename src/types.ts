@@ -1,4 +1,4 @@
-import { DocumentInterface } from "@langchain/core/documents";
+import type { DocumentInterface } from "@langchain/core/documents";
 
 /** 知识库文档元数据 */
 export interface KnowledgeMetadata {
@@ -19,27 +19,6 @@ export interface KnowledgeMetadata {
 /** 带元数据的知识文档 */
 export type KnowledgeDocument = DocumentInterface<KnowledgeMetadata>;
 
-/** 知识域枚举 */
-export const KNOWLEDGE_DOMAINS = {
-  HUANGDI_NEIJING: "黄帝内经",
-  SHANGHAN_LUN: "伤寒论",
-  JINGUI_YAOLUE: "金匮要略",
-  SHENNONG_BENCAO: "神农本草经",
-  ZHENJIU: "针灸",
-  TIANJI: "天纪",
-  MINGLI_BAZI: "命理八字",
-  MIANXIANG: "面相学",
-  ZHONGYI_LINCHUANG: "中医临床",
-  YANGSHENG: "养生功法",
-  FANGJI: "方剂",
-  YIAN: "医案",
-  YINSHI: "阴实理论",
-  WENJI: "文集",
-} as const;
-
-export type KnowledgeDomain =
-  (typeof KNOWLEDGE_DOMAINS)[keyof typeof KNOWLEDGE_DOMAINS];
-
 /** Agent 分析结果 */
 export interface AnalysisResult {
   /** 分析结论 */
@@ -56,24 +35,6 @@ export interface AnalysisResult {
   confidence: number;
   /** 建议的后续操作 */
   suggestions?: string[];
-}
-
-/** LangGraph Agent State */
-export interface AgentState {
-  /** 用户原始输入 */
-  input: string;
-  /** 对话历史摘要 */
-  chatHistory?: string;
-  /** 分类的查询类型 */
-  queryType?: QueryType;
-  /** 检索到的知识文档 */
-  retrievedDocs?: KnowledgeDocument[];
-  /** 分析结果 */
-  analysis?: AnalysisResult;
-  /** 最终回复 */
-  response?: string;
-  /** 是否需要追问 */
-  needsClarification?: boolean;
 }
 
 /** 查询类型 */

@@ -1,17 +1,11 @@
-import { ChatOpenAI } from "@langchain/openai";
-import { PromptTemplate } from "@langchain/core/prompts";
 import { StringOutputParser } from "@langchain/core/output_parsers";
-import { RunnableSequence } from "@langchain/core/runnables";
+import { PromptTemplate } from "@langchain/core/prompts";
+import { ChatOpenAI } from "@langchain/openai";
 import { config } from "../config.js";
-import { searchKnowledge } from "../vectorstore/chroma.js";
 import { classifyQuery } from "../rag/chain.js";
+import type { AnalysisResult, KnowledgeDocument, QueryType } from "../types.js";
+import { searchKnowledge } from "../vectorstore/chroma.js";
 import { formatRetrievedDocs } from "./tools.js";
-import type {
-  AgentState,
-  KnowledgeDocument,
-  QueryType,
-  AnalysisResult,
-} from "../types.js";
 
 /** 获取 LLM 实例 */
 function getLLM(): ChatOpenAI {
@@ -39,48 +33,22 @@ async function queryRouter(input: string): Promise<{
 
   switch (queryType) {
     case "tcm_diagnosis":
-      searchQueries = [
-        input,
-        `辨证 ${input}`,
-        `症状 ${input}`,
-      ];
+      searchQueries = [input, `辨证 ${input}`, `症状 ${input}`];
       break;
     case "tcm_prescription":
-      searchQueries = [
-        input,
-        `方剂 ${input}`,
-        `药物 ${input}`,
-      ];
+      searchQueries = [input, `方剂 ${input}`, `药物 ${input}`];
       break;
     case "bazi_analysis":
-      searchQueries = [
-        input,
-        `八字 ${input}`,
-        `命理 ${input}`,
-        `五行 ${input}`,
-      ];
+      searchQueries = [input, `八字 ${input}`, `命理 ${input}`, `五行 ${input}`];
       break;
     case "mianxiang_analysis":
-      searchQueries = [
-        input,
-        `面相 ${input}`,
-        `麻衣神相 ${input}`,
-      ];
+      searchQueries = [input, `面相 ${input}`, `麻衣神相 ${input}`];
       break;
     case "yijing_divination":
-      searchQueries = [
-        input,
-        `易经 ${input}`,
-        `卦 ${input}`,
-        `天纪 ${input}`,
-      ];
+      searchQueries = [input, `易经 ${input}`, `卦 ${input}`, `天纪 ${input}`];
       break;
     case "health_advice":
-      searchQueries = [
-        input,
-        `养生 ${input}`,
-        `功法 ${input}`,
-      ];
+      searchQueries = [input, `养生 ${input}`, `功法 ${input}`];
       break;
     default:
       searchQueries = [input];
@@ -92,13 +60,9 @@ async function queryRouter(input: string): Promise<{
 /**
  * 检索阶段：使用多个查询从知识库检索，合并去重
  */
-async function retrievalStage(
-  searchQueries: string[]
-): Promise<KnowledgeDocument[]> {
+async function retrievalStage(searchQueries: string[]): Promise<KnowledgeDocument[]> {
   // 多查询检索：用每个查询同时检索，再合并去重
-  const allResults = await Promise.all(
-    searchQueries.map((q) => searchKnowledge(q, config.retrievalTopK))
-  );
+  const allResults = await Promise.all(searchQueries.map((q) => searchKnowledge(q, config.retrievalTopK)));
 
   // 合并 + 去重（基于 pageContent + metadata.source）
   const seen = new Set<string>();
@@ -271,12 +235,74 @@ function getPromptForType(queryType: QueryType) {
 }
 
 /**
+ * 带指数退避的重试包装器
+ */
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  maxRetries: number = config.llmMaxRetries,
+  baseDelayMs: number = config.llmRetryBaseDelay,
+): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastError = err;
+      if (attempt < maxRetries - 1) {
+        const delay = baseDelayMs * 2 ** attempt;
+        await new Promise((r) => setTimeout(r, delay));
+      }
+    }
+  }
+  throw lastError;
+}
+
+/**
+ * 使用 LLM 对检索结果进行重排序
+ */
+async function rerankDocs(query: string, docs: KnowledgeDocument[], topK: number): Promise<KnowledgeDocument[]> {
+  if (docs.length <= 1) return docs;
+  try {
+    const llm = getLLM();
+    const docList = docs
+      .map(
+        (d, i) =>
+          `[${i}] 来源: ${d.metadata.source} 章节: ${d.metadata.h2 || ""} ${d.metadata.h3 || ""}\n${d.pageContent.slice(0, 500)}`,
+      )
+      .join("\n\n");
+
+    const prompt = `Rate the relevance of each knowledge document to the user query. Return ONLY a JSON array of scores: [score0, score1, ...] where each score is 0-10.
+
+User query: ${query}
+
+Documents:
+${docList}
+
+JSON scores:`;
+
+    const response = await withRetry(() => llm.invoke(prompt));
+    const text = typeof response === "string" ? response : response.content;
+    const jsonMatch = typeof text === "string" ? text.match(/\[[\d.,\s]+\]/) : null;
+    if (!jsonMatch) return docs.slice(0, topK);
+
+    const scores = JSON.parse(jsonMatch[0]) as number[];
+    if (!Array.isArray(scores) || scores.length !== docs.length) return docs.slice(0, topK);
+
+    const scored = docs.map((doc, i) => ({ doc, score: scores[i] ?? 0 })).sort((a, b) => b.score - a.score);
+
+    return scored.slice(0, topK).map((s) => s.doc);
+  } catch {
+    return docs.slice(0, topK);
+  }
+}
+
+/**
  * Agentic RAG 主流程
  * 1. 路由 → 2. 检索 → 3. 增强分析 → 4. 生成回复
  */
 export async function agenticRag(
   input: string,
-  chatHistory?: string
+  chatHistory?: string,
 ): Promise<{
   response: string;
   queryType: QueryType;
@@ -286,7 +312,13 @@ export async function agenticRag(
   const route = await queryRouter(input);
 
   // Step 2: 检索 - 从知识库获取相关内容
-  const docs = await retrievalStage(route.searchQueries);
+  let docs = await retrievalStage(route.searchQueries);
+
+  // Step 2a: 可选重排序
+  if (config.enableReranking && docs.length > 1) {
+    docs = await rerankDocs(input, docs, config.retrievalTopK);
+  }
+
   const context = formatRetrievedDocs(docs);
 
   // Step 3: 增强分析 - 选择合适的 Prompt 并生成
@@ -306,10 +338,12 @@ ${input}`;
   }
 
   const chain = prompt.pipe(llm).pipe(new StringOutputParser());
-  const response = await chain.invoke({
-    context: context || "未检索到相关知识库内容。请基于你的知识回答。",
-    input: finalPrompt,
-  });
+  const response = await withRetry(() =>
+    chain.invoke({
+      context: context || "未检索到相关知识库内容。请基于你的知识回答。",
+      input: finalPrompt,
+    }),
+  );
 
   return {
     response,
@@ -327,7 +361,7 @@ export async function deepAnalysis(input: string): Promise<AnalysisResult> {
 
   const llm = getLLM();
   const analysisPrompt = PromptTemplate.fromTemplate(`
-你是一位资深中医命理分析师。请对以下问题进行深度分析，输出结构化结果。
+ 你是一位资深中医命理分析师。请对以下问题进行深度分析，输出结构化结果。
 
 ## 知识库参考
 {context}
@@ -348,7 +382,7 @@ export async function deepAnalysis(input: string): Promise<AnalysisResult> {
 `);
 
   const chain = analysisPrompt.pipe(llm).pipe(new StringOutputParser());
-  const result = await chain.invoke({ context, input });
+  const result = await withRetry(() => chain.invoke({ context, input }));
 
   // 尝试解析为 JSON
   try {
