@@ -20,7 +20,7 @@ npm run ingest
 npm run dev
 
 # 3. 或单次查询
-node --loader ts-node/esm src/index.ts "桂枝汤的组成和适应症是什么？"
+npx tsx src/index.ts "桂枝汤的组成和适应症是什么？"
 ```
 
 ### 系统架构

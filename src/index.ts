@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 
-import readline from "readline";
-import { config } from "./config.js";
+import readline from "node:readline";
 import { agenticRag, deepAnalysis } from "./agents/index.js";
+import { config } from "./config.js";
+import { addMessage, clearHistory, getHistoryForContext, getRecentHistory } from "./conversation/index.js";
 import { getDocumentCount, listCollections } from "./vectorstore/chroma.js";
 
 const QUERY_TYPES_LABEL: Record<string, string> = {
@@ -19,7 +20,11 @@ const QUERY_TYPES_LABEL: Record<string, string> = {
 function color(text: string, code: number) {
   return `\x1b[${code}m${text}\x1b[0m`;
 }
-const CYAN = 36, GREEN = 32, YELLOW = 33, GRAY = 90, BOLD = 1;
+const CYAN = 36,
+  GREEN = 32,
+  YELLOW = 33,
+  GRAY = 90,
+  BOLD = 1;
 
 async function showWelcome() {
   console.log(`
@@ -39,9 +44,17 @@ ${color(" 易经 | 天纪 | 人纪 | 命理 | 面相", GRAY)}
     console.log(`${color("知识库未初始化，请运行: npm run ingest", YELLOW)}`);
   }
 
+  const history = getRecentHistory();
+  const userMsgCount = history.filter((m) => m.role === "user").length;
+  if (userMsgCount > 0) {
+    console.log(`${color(`上次会话: ${userMsgCount} 条提问`, GRAY)}`);
+  }
+
   console.log("");
   console.log(`${color("输入问题开始咨询，或输入:", GRAY)}`);
-  console.log(`  ${color("/help", CYAN)}   ${color("/exit", CYAN)}   ${color("/deep", CYAN)}   ${color("/history", CYAN)}   ${color("/status", CYAN)}   ${color("/clear", CYAN)}`);
+  console.log(
+    `  ${color("/help", CYAN)}   ${color("/exit", CYAN)}   ${color("/deep", CYAN)}   ${color("/history", CYAN)}   ${color("/status", CYAN)}   ${color("/clear", CYAN)}`,
+  );
   console.log("");
 }
 
@@ -68,7 +81,11 @@ ${color("命令:", BOLD)}
 let processing = false;
 
 function safePrompt(rl: readline.Interface) {
-  try { rl.prompt(); } catch { /* stdin closed */ }
+  try {
+    rl.prompt();
+  } catch {
+    /* stdin closed */
+  }
 }
 
 function formatTime(ms: number): string {
@@ -76,11 +93,7 @@ function formatTime(ms: number): string {
   return s;
 }
 
-async function handleQuery(
-  input: string,
-  rl: readline.Interface,
-  chatHistory: string[],
-) {
+async function handleQuery(input: string, rl: readline.Interface) {
   if (processing) return;
 
   if (!input) {
@@ -100,7 +113,11 @@ async function handleQuery(
       process.exit(0);
     }
 
-    if (cmd === "/help") { showHelp(); safePrompt(rl); return; }
+    if (cmd === "/help") {
+      showHelp();
+      safePrompt(rl);
+      return;
+    }
 
     if (cmd === "/status") {
       try {
@@ -109,25 +126,34 @@ async function handleQuery(
           const count = await getDocumentCount();
           console.log(`知识库: ${count} 个知识块  |  模型: ${config.llmModel}`);
         }
-      } catch { console.log("知识库未初始化"); }
+      } catch {
+        console.log("知识库未初始化");
+      }
       safePrompt(rl);
       return;
     }
 
     if (cmd === "/clear") {
-      chatHistory.length = 0;
+      clearHistory();
       console.log(`${color("✓ 对话历史已清除", GREEN)}`);
       safePrompt(rl);
       return;
     }
 
     if (cmd === "/history") {
-      if (chatHistory.length === 0) {
+      const all = getRecentHistory();
+      if (all.length === 0) {
         console.log("暂无对话历史");
       } else {
         console.log(`${color("--- 对话历史 ---", BOLD)}`);
-        for (const entry of chatHistory) {
-          console.log(entry);
+        for (const m of all) {
+          const ts = new Date(m.timestamp);
+          const timeStr = `${ts.getHours().toString().padStart(2, "0")}:${ts.getMinutes().toString().padStart(2, "0")}`;
+          const label = m.role === "user" ? "问" : "答";
+          const tag = m.queryType ? ` [${m.queryType}]` : "";
+          console.log(
+            `${color(`${label} (${timeStr}${tag}):`, m.role === "user" ? CYAN : GREEN)} ${m.content.slice(0, 300)}`,
+          );
         }
         console.log(`${color("---", BOLD)}`);
       }
@@ -148,6 +174,7 @@ async function handleQuery(
       const startTime = Date.now();
 
       try {
+        addMessage({ role: "user", content: `[深度] ${deepQuery}` });
         const result = await deepAnalysis(deepQuery);
         const elapsed = formatTime(Date.now() - startTime);
         console.log(`\n${color(`[深度分析] ${elapsed}s | ${result.references.length} 个参考`, GREEN)}`);
@@ -160,15 +187,18 @@ async function handleQuery(
         }
         if (result.suggestions && result.suggestions.length > 0) {
           console.log(`\n${color("建议:", BOLD)}`);
-          result.suggestions.forEach((s, i) => console.log(`  ${i + 1}. ${s}`));
+          for (const [i, s] of result.suggestions.entries()) {
+            console.log(`  ${i + 1}. ${s}`);
+          }
         }
         if (result.references.length > 0) {
           console.log(`\n${color("参考来源:", GRAY)}`);
-          result.references.forEach((r) =>
-            console.log(`  ${color(r.source, CYAN)} [${r.domain}]`)
-          );
+          for (const r of result.references) {
+            console.log(`  ${color(r.source, CYAN)} [${r.domain}]`);
+          }
         }
         console.log("-".repeat(50));
+        addMessage({ role: "assistant", content: result.conclusion, queryType: "deep_analysis" });
       } catch (err) {
         console.error(`${color("错误:", YELLOW)}`, (err as Error).message);
       }
@@ -190,9 +220,8 @@ async function handleQuery(
   const startTime = Date.now();
 
   try {
-    const chatCtx = chatHistory.length > 0
-      ? chatHistory.slice(-6).join("\n")
-      : undefined;
+    addMessage({ role: "user", content: trimmed });
+    const chatCtx = getHistoryForContext(3);
     const result = await agenticRag(trimmed, chatCtx);
     const elapsed = formatTime(Date.now() - startTime);
     const label = QUERY_TYPES_LABEL[result.queryType] || "知识问答";
@@ -201,9 +230,7 @@ async function handleQuery(
     console.log(result.response);
     console.log("-".repeat(50));
 
-    chatHistory.push(`${color("问:", CYAN)} ${trimmed}`);
-    chatHistory.push(`${color("答:", GREEN)} ${result.response.slice(0, 200).replace(/\n/g, " ")}`);
-    if (chatHistory.length > 20) chatHistory = chatHistory.slice(-20);
+    addMessage({ role: "assistant", content: result.response, queryType: result.queryType, docCount: result.docCount });
   } catch (err) {
     const e = err as Error;
     console.error(`${color("错误:", YELLOW)} ${e.message}`);
@@ -221,12 +248,11 @@ async function interactiveLoop() {
     prompt: "> ",
   });
 
-  const chatHistory: string[] = [];
   await showWelcome();
   rl.prompt();
 
   rl.on("line", (line) => {
-    handleQuery(line.trim(), rl, chatHistory);
+    handleQuery(line.trim(), rl);
   });
 
   return new Promise<void>((resolve) => {
@@ -236,11 +262,13 @@ async function interactiveLoop() {
 
 async function singleQuery(query: string) {
   try {
+    addMessage({ role: "user", content: query });
     const result = await agenticRag(query);
     const label = QUERY_TYPES_LABEL[result.queryType] || "知识问答";
     console.log(`${color(`[${label}] 参考 ${result.docCount} 篇`, GREEN)}`);
     console.log("-".repeat(50));
     console.log(result.response);
+    addMessage({ role: "assistant", content: result.response, queryType: result.queryType, docCount: result.docCount });
   } catch (err) {
     console.error("错误:", (err as Error).message);
   }
@@ -248,11 +276,22 @@ async function singleQuery(query: string) {
 
 async function main() {
   const args = process.argv.slice(2);
+
+  // ── TUI mode (via env var or implicit when piping) ────────────
+  if (args.length === 0 && process.env.TUI === "true" && process.stdout.isTTY) {
+    const { runTui } = await import("./tui/index.js");
+    await runTui();
+    return;
+  }
+
+  // ── Single query mode ────────────────────────────────────────
   if (args.length > 0) {
     await singleQuery(args.join(" "));
-  } else {
-    await interactiveLoop();
+    return;
   }
+
+  // ── Interactive readline mode (fallback) ─────────────────────
+  await interactiveLoop();
 }
 
 main().catch((err) => {

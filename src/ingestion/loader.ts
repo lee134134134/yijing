@@ -1,5 +1,5 @@
-import fs from "fs";
-import path from "path";
+import fs from "node:fs";
+import path from "node:path";
 import { Document } from "@langchain/core/documents";
 import { RecursiveCharacterTextSplitter } from "langchain/text_splitter";
 import { config } from "../config.js";
@@ -8,7 +8,7 @@ import type { KnowledgeDocument, KnowledgeMetadata } from "../types.js";
 /**
  * 根据文件名推断知识域
  */
-function inferDomain(filename: string): string {
+export function inferDomain(filename: string): string {
   const name = path.basename(filename, ".md").toLowerCase();
 
   const domainMap: Record<string, string> = {
@@ -59,9 +59,11 @@ export function loadAllMarkdownFiles(): KnowledgeDocument[] {
     throw new Error(`知识库目录不存在: ${knowledgeDir}`);
   }
 
+  const EXCLUDE = new Set(["README.md", "VERSION.md"]);
+
   const files = fs
     .readdirSync(knowledgeDir)
-    .filter((f) => f.endsWith(".md"))
+    .filter((f) => f.endsWith(".md") && !EXCLUDE.has(f))
     .map((f) => path.join(knowledgeDir, f));
 
   console.log(`找到 ${files.length} 个 Markdown 文件:`);
@@ -78,9 +80,7 @@ export function loadAllMarkdownFiles(): KnowledgeDocument[] {
  * 解析 Markdown 标题层级，生成更细粒度的文档块
  * 每个二级标题(##)下的内容作为一个独立块
  */
-function extractSections(
-  doc: Document<{ source: string; domain: string }>
-): KnowledgeDocument[] {
+export function extractSections(doc: Document<{ source: string; domain: string }>): KnowledgeDocument[] {
   const content = doc.pageContent;
   const lines = content.split("\n");
   const sections: KnowledgeDocument[] = [];
@@ -113,7 +113,7 @@ function extractSections(
       new Document<KnowledgeMetadata>({
         pageContent: text,
         metadata,
-      })
+      }),
     );
   }
 
@@ -132,8 +132,9 @@ function extractSections(
       currentLines = [line];
       startLine = i + 1;
     } else if (h3Match) {
-      // 遇到新 H3，刷新上一个 section
-      if (currentLines.length > 0) {
+      // 遇到新 H3：如果当前段落太短则合并（避免碎片化）
+      const currentText = currentLines.join("\n").trim();
+      if (currentLines.length > 0 && currentText.length >= 300) {
         flushSection(i);
       }
       currentH3 = h3Match[1].trim();
@@ -157,17 +158,13 @@ function extractSections(
  * 1. 先按 Markdown 标题结构拆分
  * 2. 对过长的块再做 RecursiveCharacterTextSplit
  */
-export async function chunkDocuments(
-  rawDocs: KnowledgeDocument[]
-): Promise<KnowledgeDocument[]> {
+export async function chunkDocuments(rawDocs: KnowledgeDocument[]): Promise<KnowledgeDocument[]> {
   console.log("\n正在按标题结构拆分文档...");
 
   // 第一步：按标题层级拆分为 sections
   const sections: KnowledgeDocument[] = [];
   for (const doc of rawDocs) {
-    const docSections = extractSections(
-      doc as Document<{ source: string; domain: string }>
-    );
+    const docSections = extractSections(doc as Document<{ source: string; domain: string }>);
     sections.push(...docSections);
   }
   console.log(`  标题拆分后: ${sections.length} 个段落`);
@@ -176,10 +173,7 @@ export async function chunkDocuments(
   const textSplitter = new RecursiveCharacterTextSplitter({
     chunkSize: config.chunkSize,
     chunkOverlap: config.chunkOverlap,
-    separators: [
-      "\n\n",
-      "\n",
-    ],
+    separators: ["\n\n", "\n"],
   });
 
   const rawChunks = await textSplitter.splitDocuments(sections);
@@ -207,17 +201,12 @@ export function printKnowledgeStats(docs: KnowledgeDocument[]): void {
   console.log("\n知识库统计:");
   console.log(`总知识块数: ${docs.length}`);
   console.log("\n按领域分布:");
-  for (const [domain, count] of [...domains.entries()].sort(
-    (a, b) => b[1] - a[1]
-  )) {
+  for (const [domain, count] of [...domains.entries()].sort((a, b) => b[1] - a[1])) {
     const pct = ((count / docs.length) * 100).toFixed(1);
     console.log(`  ${domain}: ${count} 块 (${pct}%)`);
   }
 
-  const avgLen =
-    docs.reduce((sum, d) => sum + d.pageContent.length, 0) / docs.length;
+  const avgLen = docs.reduce((sum, d) => sum + d.pageContent.length, 0) / docs.length;
   console.log(`\n平均块长度: ${Math.round(avgLen)} 字符`);
-  console.log(
-    `总字符数: ${docs.reduce((sum, d) => sum + d.pageContent.length, 0).toLocaleString()}`
-  );
+  console.log(`总字符数: ${docs.reduce((sum, d) => sum + d.pageContent.length, 0).toLocaleString()}`);
 }

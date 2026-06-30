@@ -1,21 +1,11 @@
-import {
-  loadAllMarkdownFiles,
-  chunkDocuments,
-  printKnowledgeStats,
-} from "./loader.js";
-import {
-  addDocumentsBatched,
-  clearAll,
-  listCollections,
-  getDocumentCount,
-} from "../vectorstore/chroma.js";
 import { config } from "../config.js";
+import { addDocumentsBatched, clearAll, getDocumentCount, listCollections } from "../vectorstore/chroma.js";
+import { chunkDocuments, loadAllMarkdownFiles, printKnowledgeStats } from "./loader.js";
 
 async function main() {
   console.log("=".repeat(50));
   console.log("  倪海厦知识库 - 索引构建");
   console.log("=".repeat(50));
-  console.log(`嵌入模型: ${config.embeddingModel}`);
   console.log(`分块大小: ${config.chunkSize} 字符`);
   console.log(`分块重叠: ${config.chunkOverlap} 字符`);
   console.log(`数据目录: ${process.cwd()}/data`);
