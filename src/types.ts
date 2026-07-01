@@ -46,4 +46,61 @@ export type QueryType =
   | "yijing_divination" // 易经占卜
   | "health_advice" // 养生建议
   | "general_knowledge" // 一般知识问答
+  | "deep_analysis" // 深度分析
   | "unknown"; // 未识别
+
+/** 普通查询结果 */
+export interface QueryResult {
+  response: string;
+  queryType: QueryType;
+  docCount: number;
+}
+
+/** 流式查询块 */
+export interface StreamChunk {
+  type: "text" | "meta" | "error" | "done";
+  /** text: 生成的文本片段; meta: 元数据; error: 错误信息; done: 完成信号 */
+  data: string | QueryResult | { error: string };
+  /** 仅在 type='meta' 时存在 */
+  queryType?: QueryType;
+  docCount?: number;
+  elapsed?: number;
+}
+
+/** API 请求体 */
+export interface QueryRequest {
+  query: string;
+  stream?: boolean;
+}
+
+/** API 响应（非流式） */
+export interface QueryResponse {
+  response: string;
+  queryType: QueryType;
+  docCount: number;
+  elapsed: number;
+}
+
+export interface DeepAnalysisResponse {
+  conclusion: string;
+  reasoning: string;
+  references: Array<{ source: string; content: string; domain: string }>;
+  confidence: number;
+  suggestions?: string[];
+  elapsed: number;
+}
+
+export interface StatusResponse {
+  docCount: number;
+  model: string;
+  collections: string[];
+  version: string;
+}
+
+export interface ErrorResponse {
+  error: {
+    code: string;
+    message: string;
+    details?: Record<string, unknown>;
+  };
+}
