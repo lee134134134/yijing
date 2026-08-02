@@ -18,11 +18,24 @@ export async function statusRoutes(server: FastifyInstance) {
       const collections = await listCollections();
       const docCount = await getDocumentCount();
 
-      const response: StatusResponse = {
+      const response: StatusResponse & {
+        embeddingModel: string;
+        chromaDbUrl: string;
+        queryRewrite: boolean;
+        maxContextTokens: number;
+        chunkSize: number;
+        chunkOverlap: number;
+      } = {
         docCount,
         model: config.llmModel,
         collections,
-        version: "2.0.0",
+        version: "2.1.0",
+        embeddingModel: config.embeddingModel,
+        chromaDbUrl: config.chromaDbUrl,
+        queryRewrite: config.enableQueryRewrite,
+        maxContextTokens: config.maxContextTokens,
+        chunkSize: config.chunkSize,
+        chunkOverlap: config.chunkOverlap,
       };
 
       logRequestComplete(rc, 200, { docCount, collections: collections.length });

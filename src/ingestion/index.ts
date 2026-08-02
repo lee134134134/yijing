@@ -8,7 +8,8 @@ async function main() {
   console.log("=".repeat(50));
   console.log(`分块大小: ${config.chunkSize} 字符`);
   console.log(`分块重叠: ${config.chunkOverlap} 字符`);
-  console.log(`数据目录: ${process.cwd()}/data`);
+  console.log(`向量存储: ChromaDB (${config.chromaDbUrl})`);
+  console.log(`Embedding: ${config.embeddingModel}`);
   console.log("");
 
   console.log("📖 第1步：加载 Markdown 文件...");
@@ -39,7 +40,8 @@ async function main() {
   console.log(`  总文档数: ${count}`);
   console.log(`  耗时: ${elapsed} 秒`);
   console.log(`  平均速度: ${(added / parseFloat(elapsed)).toFixed(1)} 块/秒`);
-  console.log(`  数据目录: ${process.cwd()}/data`);
+  console.log(`  向量存储: ChromaDB (${config.chromaDbUrl})`);
+  console.log(`  Embedding: ${config.embeddingModel}`);
 }
 
 main().catch((err) => {

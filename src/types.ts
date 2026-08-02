@@ -95,6 +95,12 @@ export interface StatusResponse {
   model: string;
   collections: string[];
   version: string;
+  embeddingModel: string;
+  chromaDbUrl: string;
+  queryRewrite: boolean;
+  maxContextTokens: number;
+  chunkSize: number;
+  chunkOverlap: number;
 }
 
 export interface ErrorResponse {

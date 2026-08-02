@@ -33,11 +33,12 @@ npx tsx src/index.ts "桂枝汤的组成和适应症是什么？"
 | `CHUNK_SIZE` | `800` | 文本分块大小（字符数） |
 | `CHUNK_OVERLAP` | `150` | 分块重叠（字符数） |
 | `RETRIEVAL_TOP_K` | `5` | 每次检索返回的文档数 |
-| `ENABLE_HYBRID_SEARCH` | `true` | 启用混合搜索（n-gram + BM25） |
-| `HYBRID_SEARCH_RRF_K` | `60` | RRF 融合参数（越大排序越均匀） |
+| `EMBEDDING_MODEL` | `text-embedding-3-small` | Embedding 模型名称 |
+| `EMBEDDING_DIMENSION` | `1536` | Embedding 向量维度 |
+| `CHROMA_DB_URL` | `http://127.0.0.1:8000` | ChromaDB 服务地址 |
+| `CHROMA_COLLECTION_NAME` | `yijing_knowledge` | ChromaDB 集合名称 |
 | `ENABLE_RERANKING` | `false` | 启用 LLM 重排序 |
 | `MAX_HISTORY` | `200` | 对话历史最大保留条数 |
-| `CHROMA_COLLECTION_NAME` | `yijing_knowledge` | 集合名称 |
 | `KNOWLEDGE_DIR` | `./memory` | 知识库 Markdown 目录 |
 
 ## 命令
@@ -62,7 +63,10 @@ src/
     loader.ts            Markdown 加载和分块
     index.ts             索引构建入口
   vectorstore/
-    chroma.ts            n-gram + BM25 混合检索
+    chroma.ts            ChromaDB 向量检索
+    embeddings.ts        Embedding 管理器
+    migration.ts         JSON → ChromaDB 迁移
+    index.ts             统一导出
   rag/
     chain.ts             RAG 检索链 + 查询分类
   agents/
@@ -71,8 +75,16 @@ src/
   conversation/
     store.ts             对话持久化存储
 memory/                  知识库 Markdown 文件
-data/                    索引数据（gitignored）
+data/                    旧版 JSON 索引（迁移后自动备份为 .bak）
 ```
+
+## 环境要求
+
+- **Node.js >= 22**
+- **ChromaDB** — 向量数据库服务。启动方式：
+  ```bash
+  docker run -p 8000:8000 chromadb/chroma
+  ```
 
 ## 免责声明
 
