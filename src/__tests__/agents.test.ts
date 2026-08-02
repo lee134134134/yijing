@@ -10,6 +10,10 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("../config.js", () => ({
   config: {
+    // Phase 4: 现有集成测试的 mock 面向旧确定性管线设计(PromptTemplate 链式 mock,
+    // ChatOpenAI 无 bindTools),无法驱动 DeepAgent 运行时。按 D2-B 回退到 classic
+    // 模式验证旧管线;deep 模式的集成测试在 Phase 6 重写。
+    agentMode: "classic",
     enableQueryRewrite: true,
     rewriteNumQueries: 3,
     retrievalTopK: 5,
