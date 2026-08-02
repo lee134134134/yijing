@@ -16,6 +16,14 @@ export const config = {
   llmMaxRetries: parseInt(process.env.LLM_MAX_RETRIES || "3", 10),
   llmRetryBaseDelay: parseInt(process.env.LLM_RETRY_BASE_DELAY || "2000", 10),
 
+  // ── Agent 模式 ──
+  /** deep: DeepAgent.js 编排(默认); classic: 旧确定性管线 */
+  agentMode: (process.env.AGENT_MODE || "deep") as "deep" | "classic",
+  /** DeepAgent 最大迭代轮数(控成本) */
+  deepAgentMaxIterations: parseInt(process.env.DEEP_AGENT_MAX_ITERATIONS || "25", 10),
+  /** 是否启用 todoListMiddleware(任务规划中间件) */
+  enableTodoPlanning: process.env.ENABLE_TODO_PLANNING !== "false",
+
   // ── Embedding ──
   embeddingModel: process.env.EMBEDDING_MODEL || "text-embedding-3-small",
   embeddingDimension: parseInt(process.env.EMBEDDING_DIMENSION || "1536", 10),
