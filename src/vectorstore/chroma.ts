@@ -1,74 +1,97 @@
 /**
  * 向量存储 — ChromaDB + Embedding 语义检索
  *
- * 使用 @langchain/community Chroma 客户端，连接本地或远程 ChromaDB 服务，
- * 通过 OpenAI Embedding 模型将文档转换为向量，实现语义检索。
+ * 直接使用 chromadb JS 客户端(3.5.0)连接本地或远程 ChromaDB 服务,
+ * 通过本地 Embedding 模型将文档转换为向量,实现语义检索。
  *
- * 架构变化 (v2.0.0):
- * - 移除 n-gram Jaccard 本地检索（由 ChromaDB 向量检索替代）
- * - 移除 MiniSearch BM25 全文索引（可选后续层叠混合搜索）
- * - 新增真实 Embedding（text-embedding-3-small）
- * - 保留相同导出 API，下游调用方无需修改
+ * 架构变化 (v3.0.0 - DeepAgent.js 迁移):
+ * - 移除 @langchain/community Chroma vectorstore 依赖(LangChain 1.x 不再提供)
+ * - 改为 ChromaClient 直连:embed → query → 解析,接口完全自控
+ * - 保留相同导出 API,下游调用方无需修改
  *
  * 依赖服务:
- *   ChromaDB HTTP 服务（默认 http://127.0.0.1:8000）
+ *   ChromaDB HTTP 服务(默认 http://127.0.0.1:8000)
  *   可通过 docker-compose 启动
  */
 
-import { Chroma } from "@langchain/community/vectorstores/chroma";
-import { ChromaClient } from "chromadb";
+import { Document } from "@langchain/core/documents";
+import { ChromaClient, type Collection } from "chromadb";
 import { config } from "../config.js";
-import { RetrievalError, StoreError } from "../errors.js";
+import { StoreError } from "../errors.js";
 import { createLogger } from "../logger.js";
-import type { KnowledgeDocument } from "../types.js";
+import type { KnowledgeDocument, KnowledgeMetadata } from "../types.js";
 import { getEmbeddings } from "./embeddings.js";
 
 const log = createLogger("vectorstore:chroma");
 
 // ========================================
-// 连接管理（单例）
+// 连接管理(单例)
 // ========================================
 
 /** ChromaDB metadata filter (Where type) */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type WhereFilter = Record<string, any>;
 
-let _store: Chroma | null = null;
+let _client: ChromaClient | null = null;
+let _collection: Collection | null = null;
 let _collectionInitialized = false;
 
-/**
- * 获取或创建 ChromaDB 连接
- */
-async function getStore(): Promise<Chroma> {
-  if (!_store) {
-    log.info({ url: config.chromaDbUrl, collection: config.chromaCollectionName }, "Connecting to ChromaDB");
-    _store = await Chroma.fromExistingCollection(getEmbeddings(), {
-      collectionName: config.chromaCollectionName,
-      url: config.chromaDbUrl,
-    });
-    _collectionInitialized = true;
-  }
-  return _store;
+/** ChromaDB metadata 仅支持标量类型 */
+function toScalarMetadata(meta: KnowledgeMetadata): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(meta).filter(([, v]) => v !== undefined && v !== null),
+  ) as Record<string, string>;
 }
 
 /**
- * 确认集合存在，若不存在则创建
+ * 获取或创建 ChromaDB 客户端(单例)
  */
-async function ensureCollection(): Promise<Chroma> {
-  if (_collectionInitialized) return getStore();
+function getClient(): ChromaClient {
+  if (!_client) {
+    const url = new URL(config.chromaDbUrl);
+    _client = new ChromaClient({
+      host: url.hostname,
+      port: Number(url.port || (url.protocol === "https:" ? 443 : 80)),
+      ssl: url.protocol === "https:",
+    });
+    log.info({ url: config.chromaDbUrl, collection: config.chromaCollectionName }, "Connecting to ChromaDB");
+  }
+  return _client;
+}
 
-  try {
-    return await getStore();
-  } catch {
-    // 集合不存在，用空文档创建
-    log.info("Collection not found, creating...");
-    _store = await Chroma.fromDocuments([], getEmbeddings(), {
-      collectionName: config.chromaCollectionName,
-      url: config.chromaDbUrl,
+/**
+ * 获取或创建集合(单例,不存在则自动创建)
+ */
+async function getCollection(): Promise<Collection> {
+  if (!_collection) {
+    _collection = await getClient().getOrCreateCollection({
+      name: config.chromaCollectionName,
     });
     _collectionInitialized = true;
-    return _store;
   }
+  return _collection;
+}
+
+/**
+ * 解析 ChromaDB query 返回,重建 KnowledgeDocument 列表
+ */
+function parseQueryResult(result: Awaited<ReturnType<Collection["query"]>>): KnowledgeDocument[] {
+  const docs = result.documents?.[0] ?? [];
+  const metas = result.metadatas?.[0] ?? [];
+  return docs.map((pageContent, i) => {
+    const meta = (metas[i] ?? {}) as Record<string, unknown>;
+    return new Document<KnowledgeMetadata>({
+      pageContent: pageContent ?? "",
+      metadata: {
+        source: String(meta.source ?? ""),
+        domain: String(meta.domain ?? ""),
+        h1: meta.h1 ? String(meta.h1) : undefined,
+        h2: meta.h2 ? String(meta.h2) : undefined,
+        h3: meta.h3 ? String(meta.h3) : undefined,
+        lineRange: meta.lineRange ? String(meta.lineRange) : undefined,
+      },
+    });
+  });
 }
 
 // ========================================
@@ -78,7 +101,7 @@ async function ensureCollection(): Promise<Chroma> {
 /**
  * 语义搜索知识库
  *
- * 使用 Embedding 将查询转为向量，在 ChromaDB 中执行余弦相似度搜索。
+ * 使用 Embedding 将查询转为向量,在 ChromaDB 中执行余弦相似度搜索。
  * 返回按相关度降序排列的知识文档列表。
  */
 export async function searchKnowledge(
@@ -86,19 +109,25 @@ export async function searchKnowledge(
   topK: number = config.retrievalTopK,
 ): Promise<KnowledgeDocument[]> {
   try {
-    const store = await getStore();
-    const results = await store.similaritySearchWithScore(query, topK);
+    const collection = await getCollection();
+    const queryEmbedding = await getEmbeddings().embedQuery(query);
+    const result = await collection.query({
+      queryEmbeddings: [queryEmbedding],
+      nResults: topK,
+      include: ["documents", "metadatas"],
+    });
 
-    if (results.length === 0) {
+    const docs = parseQueryResult(result);
+    if (docs.length === 0) {
       log.debug({ query }, "No results found");
       return [];
     }
 
-    log.debug({ query, results: results.length }, "Search completed");
-    return results.map(([doc]) => doc as KnowledgeDocument);
+    log.debug({ query, results: docs.length }, "Search completed");
+    return docs;
   } catch (err) {
     log.error({ err, query }, "Search failed");
-    // 降级：返回空结果，由调用方处理
+    // 降级:返回空结果,由调用方处理
     return [];
   }
 }
@@ -106,7 +135,7 @@ export async function searchKnowledge(
 /**
  * 按领域搜索
  *
- * 通过 ChromaDB 的 metadata 过滤，仅搜索指定领域的文档。
+ * 通过 ChromaDB 的 metadata 过滤,仅搜索指定领域的文档。
  * 领域值由 ingestion 阶段的 inferDomain() 设置。
  */
 export async function searchByDomain(
@@ -115,16 +144,23 @@ export async function searchByDomain(
   topK: number = config.retrievalTopK,
 ): Promise<KnowledgeDocument[]> {
   try {
-    const store = await getStore();
+    const collection = await getCollection();
+    const queryEmbedding = await getEmbeddings().embedQuery(query);
     const filter: WhereFilter = { domain: { $eq: domain } };
-    const results = await store.similaritySearchWithScore(query, topK, filter);
+    const result = await collection.query({
+      queryEmbeddings: [queryEmbedding],
+      nResults: topK,
+      where: filter,
+      include: ["documents", "metadatas"],
+    });
 
-    if (results.length === 0) {
+    const docs = parseQueryResult(result);
+    if (docs.length === 0) {
       log.debug({ query, domain }, "No domain results found");
       return [];
     }
 
-    return results.map(([doc]) => doc as KnowledgeDocument);
+    return docs;
   } catch (err) {
     log.error({ err, query, domain }, "Domain search failed");
     return [];
@@ -138,10 +174,10 @@ export async function searchByDomain(
 /**
  * 基于排名的 Reciprocal Rank Fusion
  *
- * 仅使用文档在各结果列表中的排名位置计算融合得分（不依赖原始相似度分数），
+ * 仅使用文档在各结果列表中的排名位置计算融合得分(不依赖原始相似度分数),
  * 使多路检索结果的排序更鲁棒。
  *
- * RRF score = Σ 1/(k + rank)，其中 rank 从 0 开始。
+ * RRF score = Σ 1/(k + rank),其中 rank 从 0 开始。
  */
 function rrfFuse(
   entries: KnowledgeDocument[][],
@@ -198,9 +234,9 @@ export async function multiQuerySearch(
 // ========================================
 
 /**
- * 批量添加文档（由 ingestion 使用）
+ * 批量添加文档(由 ingestion 使用)
  *
- * 每批次写入后记录进度。ChromaDB.fromDocuments 会自动生成 Embedding。
+ * 每批次写入后记录进度。使用本地 Embedding 生成向量后直连 ChromaDB 写入。
  */
 export async function addDocumentsBatched(
   docs: KnowledgeDocument[],
@@ -209,24 +245,20 @@ export async function addDocumentsBatched(
   if (docs.length === 0) return 0;
 
   try {
-    // 首次写入：通过 fromDocuments 创建集合
-    if (!_collectionInitialized) {
-      log.info({ count: docs.length, batchSize }, "Creating collection with documents");
-      _store = await Chroma.fromDocuments(docs, getEmbeddings(), {
-        collectionName: config.chromaCollectionName,
-        url: config.chromaDbUrl,
-      });
-      _collectionInitialized = true;
-      log.info({ count: docs.length }, "Collection created");
-      return docs.length;
-    }
-
-    // 后续写入：追加到已有集合
-    const store = await getStore();
+    const collection = await getCollection();
     let total = 0;
     for (let i = 0; i < docs.length; i += batchSize) {
       const batch = docs.slice(i, i + batchSize);
-      await store.addDocuments(batch);
+      const embeddings = await getEmbeddings().embedDocuments(batch.map((d) => d.pageContent));
+      const ids = batch.map(
+        (_, j) => `doc_${Date.now()}_${i + j}_${Math.random().toString(36).slice(2, 8)}`,
+      );
+      await collection.add({
+        ids,
+        embeddings,
+        documents: batch.map((d) => d.pageContent),
+        metadatas: batch.map((d) => toScalarMetadata(d.metadata)),
+      });
       total += batch.length;
       log.info({ progress: `${total}/${docs.length}` }, "Batch written");
     }
@@ -239,7 +271,7 @@ export async function addDocumentsBatched(
 }
 
 /**
- * 添加单个批次（向下兼容，供 ingestion/index.ts 使用）
+ * 添加单个批次(向下兼容,供 ingestion/index.ts 使用)
  */
 export async function addDocuments(docs: KnowledgeDocument[]): Promise<number> {
   return addDocumentsBatched(docs, docs.length);
@@ -250,13 +282,11 @@ export async function addDocuments(docs: KnowledgeDocument[]): Promise<number> {
 // ========================================
 
 /**
- * 获取文档总数（通过 ChromaClient 直连）
+ * 获取文档总数
  */
 export async function getDocumentCount(): Promise<number> {
   try {
-    const client = new ChromaClient({ path: config.chromaDbUrl });
-    const collection = await client.getCollection({ name: config.chromaCollectionName });
-    if (!collection) return 0;
+    const collection = await getCollection();
     return await collection.count();
   } catch (err) {
     log.error({ err }, "Failed to get document count");
@@ -271,11 +301,8 @@ export async function getDocumentCount(): Promise<number> {
  */
 export async function listCollections(): Promise<string[]> {
   try {
-    const client = new ChromaClient({ path: config.chromaDbUrl });
-    const collections = await client.listCollections();
-    return collections.map((c: { name: string } | string) =>
-      typeof c === "string" ? c : c.name,
-    );
+    const collections = await getClient().listCollections();
+    return collections.map((c) => c.name);
   } catch {
     return [];
   }
@@ -284,13 +311,12 @@ export async function listCollections(): Promise<string[]> {
 /**
  * 清空集合
  *
- * 删除集合（及其中所有文档和向量）。使用 ChromaClient 直连操作。
+ * 删除集合(及其中所有文档和向量)。
  */
 export async function clearAll(): Promise<void> {
   try {
-    const client = new ChromaClient({ path: config.chromaDbUrl });
-    await client.deleteCollection({ name: config.chromaCollectionName });
-    _store = null;
+    await getClient().deleteCollection({ name: config.chromaCollectionName });
+    _collection = null;
     _collectionInitialized = false;
     log.info("Collection deleted");
   } catch (err) {
@@ -301,9 +327,10 @@ export async function clearAll(): Promise<void> {
 }
 
 /**
- * 重置连接（配置变更后使用）
+ * 重置连接(配置变更后使用)
  */
 export function resetStore(): void {
-  _store = null;
+  _client = null;
+  _collection = null;
   _collectionInitialized = false;
 }

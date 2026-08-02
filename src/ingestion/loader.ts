@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { Document } from "@langchain/core/documents";
-import { RecursiveCharacterTextSplitter } from "langchain/text_splitter";
+import { RecursiveCharacterTextSplitter } from "@langchain/textsplitters";
 import { config } from "../config.js";
 import { YijingError, ErrorCode } from "../errors.js";
 import type { KnowledgeDocument, KnowledgeMetadata } from "../types.js";
@@ -178,7 +178,7 @@ export async function chunkDocuments(rawDocs: KnowledgeDocument[]): Promise<Know
   });
 
   const rawChunks = await textSplitter.splitDocuments(sections);
-  const chunks = rawChunks.map((d) => {
+  const chunks = rawChunks.map((d: Document) => {
     return new Document<KnowledgeMetadata>({
       pageContent: d.pageContent,
       metadata: d.metadata as unknown as KnowledgeMetadata,
