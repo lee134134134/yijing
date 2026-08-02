@@ -1,6 +1,5 @@
 import { DynamicTool } from "langchain/tools";
 import { classifyQuery } from "../rag/chain.js";
-import type { KnowledgeDocument } from "../types.js";
 import { searchByDomain, searchKnowledge } from "../vectorstore/chroma.js";
 
 /**
@@ -68,21 +67,4 @@ export const classifyQueryTool = new DynamicTool({
   },
 });
 
-/**
- * 格式化检索结果供 LLM 使用
- */
-export function formatRetrievedDocs(docs: KnowledgeDocument[]): string {
-  if (docs.length === 0) return "未检索到相关知识。";
 
-  return docs
-    .map(
-      (doc, i) =>
-        `【参考 ${i + 1}】
-来源: ${doc.metadata.source}
-章节: ${[doc.metadata.h1, doc.metadata.h2, doc.metadata.h3].filter(Boolean).join(" > ")}
-领域: ${doc.metadata.domain}
-
-${doc.pageContent}`,
-    )
-    .join("\n\n");
-}

@@ -12,6 +12,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { config } from "../config.js";
+import { StoreError } from "../errors.js";
 
 const DATA_DIR = config.dataDir;
 const CONVERSATIONS_FILE = path.join(DATA_DIR, "conversations.json");

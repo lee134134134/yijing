@@ -8,3 +8,5 @@
 /logs/
 /web/dist/
 /web/node_modules/
+/.claude/
+/.omo/run-continuation/

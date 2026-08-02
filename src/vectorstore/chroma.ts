@@ -1,296 +1,309 @@
 /**
- * 本地向量存储 — 基于字符 n-gram 的中文语义检索 + BM25 混合搜索
+ * 向量存储 — ChromaDB + Embedding 语义检索
  *
- * 原理：结合 n-gram Jaccard 相似度与 BM25 关键词匹配，
- *       通过 Reciprocal Rank Fusion (RRF) 融合排序结果。
+ * 使用 @langchain/community Chroma 客户端，连接本地或远程 ChromaDB 服务，
+ * 通过 OpenAI Embedding 模型将文档转换为向量，实现语义检索。
  *
- * 存储结构:
- *   data/
- *     documents.json  - 文档内容 + 元数据
+ * 架构变化 (v2.0.0):
+ * - 移除 n-gram Jaccard 本地检索（由 ChromaDB 向量检索替代）
+ * - 移除 MiniSearch BM25 全文索引（可选后续层叠混合搜索）
+ * - 新增真实 Embedding（text-embedding-3-small）
+ * - 保留相同导出 API，下游调用方无需修改
+ *
+ * 依赖服务:
+ *   ChromaDB HTTP 服务（默认 http://127.0.0.1:8000）
+ *   可通过 docker-compose 启动
  */
 
-import fs from "node:fs";
-import path from "node:path";
-import { Document } from "@langchain/core/documents";
-import MiniSearch from "minisearch";
+import { Chroma } from "@langchain/community/vectorstores/chroma";
+import { ChromaClient } from "chromadb";
 import { config } from "../config.js";
-import type { KnowledgeDocument, KnowledgeMetadata } from "../types.js";
+import { RetrievalError, StoreError } from "../errors.js";
+import { createLogger } from "../logger.js";
+import type { KnowledgeDocument } from "../types.js";
+import { getEmbeddings } from "./embeddings.js";
 
-const DATA_DIR = path.resolve(process.cwd(), "data");
-const DOCUMENTS_FILE = path.join(DATA_DIR, "documents.json");
-
-// ========================================
-// n-gram 中文语义检索
-// ========================================
-
-function getChars(text: string): string[] {
-  return [...text];
-}
-
-function charNgrams(text: string, n: number): Set<string> {
-  const chars = getChars(text);
-  const ngrams = new Set<string>();
-  for (let i = 0; i <= chars.length - n; i++) {
-    ngrams.add(chars.slice(i, i + n).join(""));
-  }
-  return ngrams;
-}
-
-function jaccardSimilarity(a: Set<string>, b: Set<string>): number {
-  let intersection = 0;
-  for (const item of a) {
-    if (b.has(item)) intersection++;
-  }
-  const union = a.size + b.size - intersection;
-  return union === 0 ? 0 : intersection / union;
-}
-
-function computeQuerySignature(query: string) {
-  return {
-    bigrams: charNgrams(query, 2),
-    trigrams: charNgrams(query, 3),
-    chars: new Set(getChars(query)),
-  };
-}
-
-function computeDocSignature(content: string) {
-  const chars = getChars(content);
-  const terms = new Set<string>();
-  for (let i = 0; i < chars.length; i++) {
-    for (let len = 2; len <= 4 && i + len <= chars.length; len++) {
-      terms.add(chars.slice(i, i + len).join(""));
-    }
-  }
-  return {
-    bigrams: charNgrams(content, 2),
-    trigrams: charNgrams(content, 3),
-    chars: new Set(getChars(content)),
-    keyTerms: terms,
-  };
-}
+const log = createLogger("vectorstore:chroma");
 
 // ========================================
-// 持久化
+// 连接管理（单例）
 // ========================================
 
-interface StoredDocument {
-  id: string;
-  content: string;
-  metadata: KnowledgeMetadata;
-}
+/** ChromaDB metadata filter (Where type) */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type WhereFilter = Record<string, any>;
 
-function ensureDataDir() {
-  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-}
+let _store: Chroma | null = null;
+let _collectionInitialized = false;
 
-function loadDocuments(): StoredDocument[] {
-  ensureDataDir();
-  if (!fs.existsSync(DOCUMENTS_FILE)) return [];
-  return JSON.parse(fs.readFileSync(DOCUMENTS_FILE, "utf-8"));
-}
-
-function saveDocuments(docs: StoredDocument[]) {
-  ensureDataDir();
-  fs.writeFileSync(DOCUMENTS_FILE, JSON.stringify(docs, null, 2), "utf-8");
-}
-
-// ========================================
-// BM25 全文索引（lazy init）
-// ========================================
-
-let _miniSearch: MiniSearch | null = null;
-
-function buildMiniSearchIndex(docs: StoredDocument[]): MiniSearch {
-  const ms = new MiniSearch({
-    fields: ["content"],
-    storeFields: ["source", "domain", "h1", "h2", "h3"],
-    tokenize: (text) => {
-      // 中文：按字符切分；英文/数字：按空格
-      const tokens: string[] = [];
-      for (const ch of text) {
-        if (/[\u4e00-\u9fff\u3400-\u4dbf]/.test(ch)) {
-          tokens.push(ch);
-        }
-      }
-      // 同时保留英文单词
-      const engWords = text.split(/[^a-zA-Z0-9]+/).filter(Boolean);
-      return [...tokens, ...engWords.map((w) => w.toLowerCase())];
-    },
-    processTerm: (term) => term.toLowerCase(),
-    searchOptions: {
-      prefix: true,
-      fuzzy: 0.2,
-      boost: { content: 2 },
-    },
-  });
-  for (const doc of docs) {
-    ms.add({
-      id: doc.id,
-      content: doc.content.slice(0, 2000),
-      source: doc.metadata.source || "",
-      domain: doc.metadata.domain || "",
-      h1: doc.metadata.h1 || "",
-      h2: doc.metadata.h2 || "",
-      h3: doc.metadata.h3 || "",
+/**
+ * 获取或创建 ChromaDB 连接
+ */
+async function getStore(): Promise<Chroma> {
+  if (!_store) {
+    log.info({ url: config.chromaDbUrl, collection: config.chromaCollectionName }, "Connecting to ChromaDB");
+    _store = await Chroma.fromExistingCollection(getEmbeddings(), {
+      collectionName: config.chromaCollectionName,
+      url: config.chromaDbUrl,
     });
+    _collectionInitialized = true;
   }
-  return ms;
+  return _store;
 }
 
-function getMiniSearch(docs: StoredDocument[]): MiniSearch {
-  if (!_miniSearch) {
-    _miniSearch = buildMiniSearchIndex(docs);
+/**
+ * 确认集合存在，若不存在则创建
+ */
+async function ensureCollection(): Promise<Chroma> {
+  if (_collectionInitialized) return getStore();
+
+  try {
+    return await getStore();
+  } catch {
+    // 集合不存在，用空文档创建
+    log.info("Collection not found, creating...");
+    _store = await Chroma.fromDocuments([], getEmbeddings(), {
+      collectionName: config.chromaCollectionName,
+      url: config.chromaDbUrl,
+    });
+    _collectionInitialized = true;
+    return _store;
   }
-  return _miniSearch;
-}
-
-function keywordSearch(
-  query: string,
-  docs: StoredDocument[],
-  topK: number,
-): Array<{ doc: StoredDocument; score: number }> {
-  const ms = getMiniSearch(docs);
-  const results = ms.search(query, { prefix: true, fuzzy: 0.2, boost: { content: 2 } });
-  const docMap = new Map(docs.map((d) => [d.id, d]));
-  return results
-    .filter((r) => docMap.has(r.id))
-    .slice(0, topK)
-    .map((r) => ({ doc: docMap.get(r.id)!, score: r.score }));
-}
-
-function rrfFuse(
-  vectorResults: Array<{ doc: StoredDocument; score: number }>,
-  keywordResults: Array<{ doc: StoredDocument; score: number }>,
-  topK: number,
-  k: number = 60,
-): Array<{ doc: StoredDocument; score: number }> {
-  const combined = new Map<string, { doc: StoredDocument; score: number }>();
-
-  vectorResults.forEach((entry, i) => {
-    combined.set(entry.doc.id, { doc: entry.doc, score: 1 / (k + i) });
-  });
-
-  keywordResults.forEach((entry, i) => {
-    const existing = combined.get(entry.doc.id);
-    if (existing) {
-      existing.score += 1 / (k + i);
-    } else {
-      combined.set(entry.doc.id, { doc: entry.doc, score: 1 / (k + i) });
-    }
-  });
-
-  return Array.from(combined.values())
-    .sort((a, b) => b.score - a.score)
-    .slice(0, topK);
 }
 
 // ========================================
-// 相似度评分
+// 检索操作
 // ========================================
 
-function scoreRelevance(query: string, doc: StoredDocument): number {
-  const qSig = computeQuerySignature(query);
-  const dSig = computeDocSignature(doc.content);
-
-  const bigramScore = jaccardSimilarity(qSig.bigrams, dSig.bigrams);
-  const trigramScore = jaccardSimilarity(qSig.trigrams, dSig.trigrams);
-  const charScore = jaccardSimilarity(qSig.chars, dSig.chars);
-
-  const titleBonus =
-    doc.metadata.h2 && query.includes(doc.metadata.h2)
-      ? 0.15
-      : doc.metadata.h1 && query.includes(doc.metadata.h1)
-        ? 0.1
-        : 0;
-
-  const domainBonus = query.includes(doc.metadata.domain) ? 0.1 : 0;
-
-  return bigramScore * 0.35 + trigramScore * 0.35 + charScore * 0.3 + titleBonus + domainBonus;
-}
-
-// ========================================
-// CRUD 操作
-// ========================================
-
-export async function addDocuments(docs: KnowledgeDocument[]): Promise<number> {
-  const stored = loadDocuments();
-  for (let i = 0; i < docs.length; i++) {
-    stored.push({ id: `doc_${Date.now()}_${i}`, content: docs[i].pageContent, metadata: docs[i].metadata });
-  }
-  saveDocuments(stored);
-  return docs.length;
-}
-
-export async function clearAll(): Promise<void> {
-  if (fs.existsSync(DOCUMENTS_FILE)) fs.unlinkSync(DOCUMENTS_FILE);
-  console.log("已清空所有数据");
-}
-
+/**
+ * 语义搜索知识库
+ *
+ * 使用 Embedding 将查询转为向量，在 ChromaDB 中执行余弦相似度搜索。
+ * 返回按相关度降序排列的知识文档列表。
+ */
 export async function searchKnowledge(
   query: string,
   topK: number = config.retrievalTopK,
 ): Promise<KnowledgeDocument[]> {
-  const stored = loadDocuments();
-  if (stored.length === 0) return [];
+  try {
+    const store = await getStore();
+    const results = await store.similaritySearchWithScore(query, topK);
 
-  const vectorResults = stored
-    .map((doc) => ({ doc, score: scoreRelevance(query, doc) }))
-    .sort((a, b) => b.score - a.score)
-    .slice(0, topK * 2);
+    if (results.length === 0) {
+      log.debug({ query }, "No results found");
+      return [];
+    }
 
-  if (config.enableHybridSearch) {
-    const kwResults = keywordSearch(query, stored, topK * 2);
-    const fused = rrfFuse(vectorResults, kwResults, topK, config.hybridSearchRrfK);
-    return fused.map(
-      (entry) => new Document<KnowledgeMetadata>({ pageContent: entry.doc.content, metadata: entry.doc.metadata }),
-    );
+    log.debug({ query, results: results.length }, "Search completed");
+    return results.map(([doc]) => doc as KnowledgeDocument);
+  } catch (err) {
+    log.error({ err, query }, "Search failed");
+    // 降级：返回空结果，由调用方处理
+    return [];
   }
-
-  return vectorResults
-    .slice(0, topK)
-    .map((entry) => new Document<KnowledgeMetadata>({ pageContent: entry.doc.content, metadata: entry.doc.metadata }));
 }
 
+/**
+ * 按领域搜索
+ *
+ * 通过 ChromaDB 的 metadata 过滤，仅搜索指定领域的文档。
+ * 领域值由 ingestion 阶段的 inferDomain() 设置。
+ */
 export async function searchByDomain(
   query: string,
   domain: string,
   topK: number = config.retrievalTopK,
 ): Promise<KnowledgeDocument[]> {
-  const stored = loadDocuments().filter((d) => d.metadata.domain === domain);
-  if (stored.length === 0) return [];
+  try {
+    const store = await getStore();
+    const filter: WhereFilter = { domain: { $eq: domain } };
+    const results = await store.similaritySearchWithScore(query, topK, filter);
 
-  const vectorResults = stored
-    .map((doc) => ({ doc, score: scoreRelevance(query, doc) }))
+    if (results.length === 0) {
+      log.debug({ query, domain }, "No domain results found");
+      return [];
+    }
+
+    return results.map(([doc]) => doc as KnowledgeDocument);
+  } catch (err) {
+    log.error({ err, query, domain }, "Domain search failed");
+    return [];
+  }
+}
+
+// ========================================
+// 多查询融合检索
+// ========================================
+
+/**
+ * 基于排名的 Reciprocal Rank Fusion
+ *
+ * 仅使用文档在各结果列表中的排名位置计算融合得分（不依赖原始相似度分数），
+ * 使多路检索结果的排序更鲁棒。
+ *
+ * RRF score = Σ 1/(k + rank)，其中 rank 从 0 开始。
+ */
+function rrfFuse(
+  entries: KnowledgeDocument[][],
+  topK: number,
+  k: number = 60,
+): KnowledgeDocument[] {
+  const fused = new Map<string, { doc: KnowledgeDocument; score: number }>();
+  const seen = new Set<string>();
+
+  for (const results of entries) {
+    for (let rank = 0; rank < results.length; rank++) {
+      const doc = results[rank]!;
+      const id = `${doc.metadata.source ?? ""}:${doc.metadata.h2 ?? ""}:${doc.pageContent.slice(0, 80)}`;
+
+      if (seen.has(id)) {
+        const existing = fused.get(id);
+        if (existing) existing.score += 1 / (k + rank);
+        continue;
+      }
+
+      seen.add(id);
+      fused.set(id, { doc, score: 1 / (k + rank) });
+    }
+  }
+
+  return Array.from(fused.values())
     .sort((a, b) => b.score - a.score)
-    .slice(0, topK * 2);
-
-  if (config.enableHybridSearch) {
-    const kwResults = keywordSearch(query, stored, topK * 2);
-    const fused = rrfFuse(vectorResults, kwResults, topK, config.hybridSearchRrfK);
-    return fused.map(
-      (entry) => new Document<KnowledgeMetadata>({ pageContent: entry.doc.content, metadata: entry.doc.metadata }),
-    );
-  }
-
-  return vectorResults
     .slice(0, topK)
-    .map((entry) => new Document<KnowledgeMetadata>({ pageContent: entry.doc.content, metadata: entry.doc.metadata }));
+    .map((e) => e.doc);
 }
 
-export async function getDocumentCount(): Promise<number> {
-  return loadDocuments().length;
-}
+/** 多查询融合检索 — 对多个查询分别检索后 RRF 融合 */
+export async function multiQuerySearch(
+  queries: string[],
+  topK: number = config.retrievalTopK,
+): Promise<KnowledgeDocument[]> {
+  if (queries.length === 0) return [];
+  if (queries.length === 1) return searchKnowledge(queries[0]!, topK);
 
-export async function listCollections(): Promise<string[]> {
-  return loadDocuments().length > 0 ? [config.chromaCollectionName] : [];
-}
-
-export async function addDocumentsBatched(docs: KnowledgeDocument[], batchSize = 100): Promise<number> {
-  let total = 0;
-  for (let i = 0; i < docs.length; i += batchSize) {
-    const count = await addDocuments(docs.slice(i, i + batchSize));
-    total += count;
-    console.log(`  进度: ${total}/${docs.length}`);
+  try {
+    const allResults = await Promise.all(
+      queries.map((q) => searchKnowledge(q, topK * 2)),
+    );
+    const fused = rrfFuse(allResults, topK);
+    return fused;
+  } catch (err) {
+    log.error({ err, queries }, "Multi-query search failed, falling back to primary");
+    return searchKnowledge(queries[0]!, topK);
   }
-  return total;
+}
+
+// ========================================
+// 文档管理
+// ========================================
+
+/**
+ * 批量添加文档（由 ingestion 使用）
+ *
+ * 每批次写入后记录进度。ChromaDB.fromDocuments 会自动生成 Embedding。
+ */
+export async function addDocumentsBatched(
+  docs: KnowledgeDocument[],
+  batchSize: number = 50,
+): Promise<number> {
+  if (docs.length === 0) return 0;
+
+  try {
+    // 首次写入：通过 fromDocuments 创建集合
+    if (!_collectionInitialized) {
+      log.info({ count: docs.length, batchSize }, "Creating collection with documents");
+      _store = await Chroma.fromDocuments(docs, getEmbeddings(), {
+        collectionName: config.chromaCollectionName,
+        url: config.chromaDbUrl,
+      });
+      _collectionInitialized = true;
+      log.info({ count: docs.length }, "Collection created");
+      return docs.length;
+    }
+
+    // 后续写入：追加到已有集合
+    const store = await getStore();
+    let total = 0;
+    for (let i = 0; i < docs.length; i += batchSize) {
+      const batch = docs.slice(i, i + batchSize);
+      await store.addDocuments(batch);
+      total += batch.length;
+      log.info({ progress: `${total}/${docs.length}` }, "Batch written");
+    }
+    return total;
+  } catch (err) {
+    log.error({ err }, "Failed to add documents");
+    if (err instanceof StoreError) throw err;
+    throw new StoreError("批量写入文档失败", { cause: err });
+  }
+}
+
+/**
+ * 添加单个批次（向下兼容，供 ingestion/index.ts 使用）
+ */
+export async function addDocuments(docs: KnowledgeDocument[]): Promise<number> {
+  return addDocumentsBatched(docs, docs.length);
+}
+
+// ========================================
+// 集合管理
+// ========================================
+
+/**
+ * 获取文档总数（通过 ChromaClient 直连）
+ */
+export async function getDocumentCount(): Promise<number> {
+  try {
+    const client = new ChromaClient({ path: config.chromaDbUrl });
+    const collection = await client.getCollection({ name: config.chromaCollectionName });
+    if (!collection) return 0;
+    return await collection.count();
+  } catch (err) {
+    log.error({ err }, "Failed to get document count");
+    return 0;
+  }
+}
+
+/**
+ * 列出 ChromaDB 中的所有集合
+ *
+ * 用于 CLI/TUI/API 的知识库状态检查。
+ */
+export async function listCollections(): Promise<string[]> {
+  try {
+    const client = new ChromaClient({ path: config.chromaDbUrl });
+    const collections = await client.listCollections();
+    return collections.map((c: { name: string } | string) =>
+      typeof c === "string" ? c : c.name,
+    );
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * 清空集合
+ *
+ * 删除集合（及其中所有文档和向量）。使用 ChromaClient 直连操作。
+ */
+export async function clearAll(): Promise<void> {
+  try {
+    const client = new ChromaClient({ path: config.chromaDbUrl });
+    await client.deleteCollection({ name: config.chromaCollectionName });
+    _store = null;
+    _collectionInitialized = false;
+    log.info("Collection deleted");
+  } catch (err) {
+    log.error({ err }, "Failed to clear collection");
+    if (err instanceof StoreError) throw err;
+    throw new StoreError("清空集合失败", { cause: err });
+  }
+}
+
+/**
+ * 重置连接（配置变更后使用）
+ */
+export function resetStore(): void {
+  _store = null;
+  _collectionInitialized = false;
 }

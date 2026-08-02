@@ -6,7 +6,6 @@ import type { FastifyInstance } from "fastify";
 import { agenticRag } from "../../agents/index.js";
 import { createLogger, createRequestContext, logRequestComplete } from "../../logger.js";
 import type { QueryRequest, QueryResponse } from "../../types.js";
-import { ValidationError } from "../../errors.js";
 
 const log = createLogger("api:routes:query");
 
@@ -40,7 +39,7 @@ export async function queryRoutes(server: FastifyInstance) {
 
     const trimmed = query.trim();
 
-    // ── 流式模式：SSE ──
+    // ── 流式模式：SSE（真流式，逐 chunk 推送） ──
     if (stream) {
       reply.raw.writeHead(200, {
         "Content-Type": "text/event-stream",
@@ -51,24 +50,24 @@ export async function queryRoutes(server: FastifyInstance) {
 
       try {
         const startTime = Date.now();
-        const result = await agenticRag(trimmed);
+        const result = await agenticRag(trimmed, undefined, (chunk) => {
+          const textData = JSON.stringify({ type: "text", data: chunk });
+          reply.raw.write("event: message\ndata: " + textData + "\n\n");
+        });
+
         const elapsed = (Date.now() - startTime) / 1000;
         const label = QUERY_TYPES_LABEL[result.queryType] || "知识问答";
 
-        // meta event
+        // meta event（流结束后发送，内容已包含脚注）
         const meta = JSON.stringify({ type: "meta", queryType: result.queryType, docCount: result.docCount, label });
-        reply.raw.write(`event: meta\ndata: ${meta}\n\n`);
-
-        // 将完整响应作为单一 text 事件发送（可后续改为逐字流式）
-        const textData = JSON.stringify({ type: "text", data: result.response });
-        reply.raw.write(`event: message\ndata: ${textData}\n\n`);
+        reply.raw.write("event: meta\ndata: " + meta + "\n\n");
 
         // done event
         const doneData = JSON.stringify({
           type: "done",
           data: { response: result.response, queryType: result.queryType, docCount: result.docCount, elapsed },
         });
-        reply.raw.write(`event: done\ndata: ${doneData}\n\n`);
+        reply.raw.write("event: done\ndata: " + doneData + "\n\n");
         reply.raw.end();
 
         logRequestComplete(rc, 200, { queryType: result.queryType, docCount: result.docCount, elapsed });

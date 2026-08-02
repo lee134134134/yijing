@@ -3,6 +3,7 @@ import path from "node:path";
 import { Document } from "@langchain/core/documents";
 import { RecursiveCharacterTextSplitter } from "langchain/text_splitter";
 import { config } from "../config.js";
+import { YijingError, ErrorCode } from "../errors.js";
 import type { KnowledgeDocument, KnowledgeMetadata } from "../types.js";
 
 /**
@@ -56,7 +57,7 @@ export function loadAllMarkdownFiles(): KnowledgeDocument[] {
   const knowledgeDir = config.knowledgeDir;
 
   if (!fs.existsSync(knowledgeDir)) {
-    throw new Error(`知识库目录不存在: ${knowledgeDir}`);
+    throw new YijingError(ErrorCode.CONFIG_ERROR, `知识库目录不存在: ${knowledgeDir}`);
   }
 
   const EXCLUDE = new Set(["README.md", "VERSION.md"]);

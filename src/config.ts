@@ -19,6 +19,10 @@ export const config = {
   // ── Embedding ──
   embeddingModel: process.env.EMBEDDING_MODEL || "text-embedding-3-small",
   embeddingDimension: parseInt(process.env.EMBEDDING_DIMENSION || "1536", 10),
+  /** 独立的 Embedding API 地址（默认复用 OPENAI_BASE_URL） */
+  embeddingBaseUrl: process.env.EMBEDDING_BASE_URL || process.env.OPENAI_BASE_URL || "https://api.openai.com/v1",
+  /** 独立的 Embedding API Key（默认复用 OPENAI_API_KEY） */
+  embeddingApiKey: process.env.EMBEDDING_API_KEY || process.env.OPENAI_API_KEY || "",
 
   // ── 向量存储 (ChromaDB) ──
   chromaDbUrl: process.env.CHROMA_DB_URL || "http://127.0.0.1:8000",
@@ -26,9 +30,14 @@ export const config = {
 
   // ── 检索 ──
   retrievalTopK: parseInt(process.env.RETRIEVAL_TOP_K || "5", 10),
-  enableHybridSearch: process.env.ENABLE_HYBRID_SEARCH !== "false",
-  hybridSearchRrfK: parseInt(process.env.HYBRID_SEARCH_RRF_K || "60", 10),
   enableReranking: process.env.ENABLE_RERANKING === "true",
+
+  // ── 查询重写 ──
+  enableQueryRewrite: process.env.ENABLE_QUERY_REWRITE !== "false",
+  rewriteNumQueries: parseInt(process.env.REWRITE_NUM_QUERIES || "3", 10),
+
+  // ── 上下文窗口 ──
+  maxContextTokens: parseInt(process.env.MAX_CONTEXT_TOKENS || "8192", 10),
 
   // ── 文本分块 ──
   chunkSize: parseInt(process.env.CHUNK_SIZE || "800", 10),
@@ -43,7 +52,6 @@ export const config = {
   // ── SQLite ──
   sqlitePath: process.env.SQLITE_PATH || path.resolve(projectRoot, "./data/yijing.db"),
 
-  // ── 数据目录（旧 JSON 存储） ──
   dataDir: path.resolve(projectRoot, "./data"),
 
   // ── API Server ──
