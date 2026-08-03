@@ -1,19 +1,15 @@
 /**
  * Agent 编排入口
  *
- * 根据 config.agentMode 分发:
- * - deep(默认): DeepAgent.js 编排(主 agent + deep_analyst subagent)
- * - classic: 旧确定性管线(见 legacy.ts)
+ * DeepAgent.js 编排(主 agent + deep_analyst subagent)。
  *
  * 对外 API(agenticRag / deepAnalysis)签名与迁移前保持一致,
  * 响应结构兼容(引用 [ref-N] 脚注由 deep 系统提示词保证)。
  */
 
-import { config } from "../config.js";
 import { classifyQuery } from "../rag/chain.js";
 import type { AnalysisResult, QueryType } from "../types.js";
 import { buildDeepAgent, buildDeepAnalystAgent, DEEP_ANALYST_RESPONSE_SCHEMA } from "./deep-agent.js";
-import { legacyAgenticRag, legacyDeepAnalysis } from "./legacy.js";
 
 /** 检索工具名(用于 docCount 统计) */
 const RETRIEVAL_TOOL_NAMES = new Set(["search_knowledge_base", "search_by_domain"]);
@@ -133,7 +129,7 @@ async function deepDeepAnalysis(input: string): Promise<AnalysisResult> {
 }
 
 /**
- * Agentic RAG 主流程(分发)
+ * Agentic RAG 主流程(DeepAgent.js 编排)
  */
 export async function agenticRag(
   input: string,
@@ -144,18 +140,12 @@ export async function agenticRag(
   queryType: QueryType;
   docCount: number;
 }> {
-  if (config.agentMode === "classic") {
-    return legacyAgenticRag(input, chatHistory, onToken);
-  }
   return deepAgenticRag(input, chatHistory, onToken);
 }
 
 /**
- * 深度分析(分发)
+ * 深度分析(DeepAgent.js deep_analyst 子代理)
  */
 export async function deepAnalysis(input: string): Promise<AnalysisResult> {
-  if (config.agentMode === "classic") {
-    return legacyDeepAnalysis(input);
-  }
   return deepDeepAnalysis(input);
 }
