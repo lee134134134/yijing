@@ -8,8 +8,8 @@
  */
 
 import { config } from "../config.js";
-import type { KnowledgeDocument } from "../types.js";
 import { createLogger } from "../logger.js";
+import type { KnowledgeDocument } from "../types.js";
 
 const log = createLogger("rag:context-manager");
 
@@ -28,7 +28,6 @@ export function estimateTokens(text: string): number {
     } else if (/[\u3000-\u303f\uff00-\uffef]/.test(char)) {
       tokens += 1; // CJK punctuation
     } else if (/\s/.test(char)) {
-      continue; // skip whitespace
     } else {
       tokens += 0.35; // Latin characters
     }
@@ -43,10 +42,7 @@ export function estimateTokens(text: string): number {
  * - promptOverhead: system prompt + template + user input
  * - generationBudget: tokens reserved for LLM response
  */
-export function getContextBudget(
-  promptOverhead: number = 2000,
-  generationBudget: number = 4096,
-): number {
+export function getContextBudget(promptOverhead: number = 2000, generationBudget: number = 4096): number {
   const total = config.maxContextTokens;
   const budget = total - promptOverhead - generationBudget;
   return Math.max(budget, 512);
@@ -65,11 +61,7 @@ export interface TrimResult {
  * Keeps the most relevant documents and discards excess based on token count.
  * Each doc is truncated to maxDocTokens if it exceeds the limit.
  */
-export function trimDocsToBudget(
-  docs: KnowledgeDocument[],
-  budget: number,
-  maxDocTokens: number = 1500,
-): TrimResult {
+export function trimDocsToBudget(docs: KnowledgeDocument[], budget: number, maxDocTokens: number = 1500): TrimResult {
   let totalTokens = 0;
   const kept: KnowledgeDocument[] = [];
 
@@ -77,7 +69,10 @@ export function trimDocsToBudget(
     const tokens = estimateTokens(doc.pageContent);
 
     if (totalTokens + Math.min(tokens, maxDocTokens) > budget) {
-      log.debug({ doc: doc.metadata.source, tokens, budgetRemaining: budget - totalTokens }, "Doc exceeded budget, excluded");
+      log.debug(
+        { doc: doc.metadata.source, tokens, budgetRemaining: budget - totalTokens },
+        "Doc exceeded budget, excluded",
+      );
       continue;
     }
 
@@ -118,7 +113,7 @@ function truncateToTokens(doc: KnowledgeDocument, maxTokens: number): KnowledgeD
 
   return {
     ...doc,
-    pageContent: doc.pageContent.slice(0, cutoff) + "\n[...truncated]",
+    pageContent: `${doc.pageContent.slice(0, cutoff)}\n[...truncated]`,
   } as KnowledgeDocument;
 }
 

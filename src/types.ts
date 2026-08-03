@@ -101,6 +101,7 @@ export interface StatusResponse {
   maxContextTokens: number;
   chunkSize: number;
   chunkOverlap: number;
+  agentMode: "deep" | "classic";
 }
 
 export interface ErrorResponse {

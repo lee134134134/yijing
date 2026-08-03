@@ -6,30 +6,16 @@
  */
 
 import { ChatOpenAI } from "@langchain/openai";
-import {
-  createDeepAgent,
-  createSubAgent,
-  registerHarnessProfile,
-  type DeepAgent,
-  type SubAgent,
-} from "deepagents";
-import { todoListMiddleware } from "langchain";
+import { createDeepAgent, createSubAgent, type DeepAgent, registerHarnessProfile, type SubAgent } from "deepagents";
 import type { ReactAgent } from "langchain";
+import { todoListMiddleware } from "langchain";
 import { z } from "zod";
 import { config } from "../config.js";
 import { DEEP_ANALYST_PROMPT, DEEP_SYSTEM_PROMPT } from "./prompts.js";
 import { allTools } from "./tools.js";
 
 /** 内置文件系统工具名(与 deepagents FILESYSTEM_TOOL_NAMES 一致) */
-const FILESYSTEM_TOOL_NAMES = [
-  "ls",
-  "read_file",
-  "write_file",
-  "edit_file",
-  "glob",
-  "grep",
-  "execute",
-];
+const FILESYSTEM_TOOL_NAMES = ["ls", "read_file", "write_file", "edit_file", "glob", "grep", "execute"];
 
 /**
  * 注册 harness profile,从模型可见工具集中隐藏全部文件系统工具(D1)。
@@ -65,8 +51,7 @@ export const DEEP_ANALYST_RESPONSE_SCHEMA = z.object({
 /** deep_analyst subagent(D4): /deep 深度分析,结构化 JSON 输出 */
 const deepAnalyst: SubAgent = {
   name: "deep_analyst",
-  description:
-    "对复杂的中医/命理/养生问题进行深度多角度分析,输出结构化 JSON 结论。当用户请求深度分析时使用。",
+  description: "对复杂的中医/命理/养生问题进行深度多角度分析,输出结构化 JSON 结论。当用户请求深度分析时使用。",
   systemPrompt: DEEP_ANALYST_PROMPT,
   tools: [...allTools],
   middleware: [todoListMiddleware()],
@@ -136,8 +121,7 @@ export function buildDeepAnalystAgent(): ReactAgent {
   analystInstance = createSubAgent(
     {
       name: "deep_analyst",
-      description:
-        "对复杂的中医/命理/养生问题进行深度多角度分析,输出结构化 JSON 结论。当用户请求深度分析时使用。",
+      description: "对复杂的中医/命理/养生问题进行深度多角度分析,输出结构化 JSON 结论。当用户请求深度分析时使用。",
       systemPrompt: DEEP_ANALYST_PROMPT,
       tools: [...allTools],
       middleware: config.enableTodoPlanning ? [todoListMiddleware()] : [],

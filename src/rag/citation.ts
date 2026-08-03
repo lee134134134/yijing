@@ -33,9 +33,7 @@ export function buildCitedContext(docs: KnowledgeDocument[]): CitationResult {
   const entries: CitationEntry[] = docs.map((doc, i) => ({
     refIndex: i + 1,
     source: doc.metadata.source,
-    title: [doc.metadata.h1, doc.metadata.h2, doc.metadata.h3]
-      .filter(Boolean)
-      .join(" > "),
+    title: [doc.metadata.h1, doc.metadata.h2, doc.metadata.h3].filter(Boolean).join(" > "),
     domain: doc.metadata.domain,
   }));
 
@@ -55,10 +53,7 @@ export function buildCitedContext(docs: KnowledgeDocument[]): CitationResult {
  * Scans for patterns like [ref-1], [ref-2, ref-3], [来源: xxx], [1][2]
  * and returns the matched ref indices along with the clean text.
  */
-export function parseCitations(
-  response: string,
-  entries: CitationEntry[],
-): { cleanText: string; citedRefs: number[] } {
+export function parseCitations(response: string, entries: CitationEntry[]): { cleanText: string; citedRefs: number[] } {
   const refPattern = /\[ref-(\d+)\]/g;
   const citedSet = new Set<number>();
 
@@ -69,7 +64,10 @@ export function parseCitations(
     }
   }
 
-  const cleanText = response.replace(/\[ref-\d+\]/g, "").replace(/\s{2,}/g, " ").trim();
+  const cleanText = response
+    .replace(/\[ref-\d+\]/g, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
 
   return {
     cleanText,
@@ -80,10 +78,7 @@ export function parseCitations(
 /**
  * Format citations as a footnote string (appended to response if wanted)
  */
-export function formatCitations(
-  citedRefs: number[],
-  entries: CitationEntry[],
-): string {
+export function formatCitations(citedRefs: number[], entries: CitationEntry[]): string {
   if (citedRefs.length === 0) return "";
 
   const lines = citedRefs.map((refIdx) => {

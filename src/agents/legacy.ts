@@ -13,9 +13,9 @@ import { z } from "zod";
 import { config } from "../config.js";
 import { ErrorCode, LLMError } from "../errors.js";
 import { classifyQuery } from "../rag/chain.js";
-import { rewriteQuery } from "../rag/query-rewriting.js";
+import { buildCitedContext, formatCitations, parseCitations } from "../rag/citation.js";
 import { prepareContext } from "../rag/context-manager.js";
-import { buildCitedContext, parseCitations, formatCitations } from "../rag/citation.js";
+import { rewriteQuery } from "../rag/query-rewriting.js";
 import type { AnalysisResult, KnowledgeDocument, QueryType } from "../types.js";
 import { multiQuerySearch, searchKnowledge } from "../vectorstore/chroma.js";
 
@@ -374,9 +374,7 @@ ${input}`;
  * 批量分析（用于处理复杂任务）
  */
 export async function legacyDeepAnalysis(input: string): Promise<AnalysisResult> {
-  const docs = config.enableQueryRewrite
-    ? await multiQuerySearch([input], 8)
-    : await searchKnowledge(input, 8);
+  const docs = config.enableQueryRewrite ? await multiQuerySearch([input], 8) : await searchKnowledge(input, 8);
   const prepared = prepareContext(docs);
   const context = prepared.context;
 
@@ -442,9 +440,7 @@ export async function legacyDeepAnalysis(input: string): Promise<AnalysisResult>
 请重新输出：
 `);
   const errorMsg = parsed === null ? "未找到 JSON 对象" : parsed.error.message;
-  const fixed = await withRetry(() =>
-    fixPrompt.pipe(llm).pipe(new StringOutputParser()).invoke({ error: errorMsg }),
-  );
+  const fixed = await withRetry(() => fixPrompt.pipe(llm).pipe(new StringOutputParser()).invoke({ error: errorMsg }));
   const fixedParsed = tryParse(fixed);
   if (fixedParsed?.success) return fixedParsed.data;
 

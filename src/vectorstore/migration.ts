@@ -11,7 +11,6 @@
 import fs from "node:fs";
 import path from "node:path";
 import { Document } from "@langchain/core/documents";
-import { config } from "../config.js";
 import { createLogger } from "../logger.js";
 import type { KnowledgeDocument, KnowledgeMetadata } from "../types.js";
 import { addDocumentsBatched, clearAll, getDocumentCount } from "./chroma.js";
@@ -102,7 +101,7 @@ export async function runMigration(): Promise<void> {
   console.log(`  耗时: ${elapsed} 秒`);
 
   // Step 4: 清理旧数据
-  const backupPath = DOCUMENTS_FILE + ".bak";
+  const backupPath = `${DOCUMENTS_FILE}.bak`;
   fs.renameSync(DOCUMENTS_FILE, backupPath);
   console.log(`\n旧 JSON 文件已备份为: ${backupPath}`);
   console.log("  如需回滚，将 ChromaDB 中数据重新导入即可。");

@@ -9,8 +9,8 @@
 
 import { StringOutputParser } from "@langchain/core/output_parsers";
 import { PromptTemplate } from "@langchain/core/prompts";
-import { getChatModel } from "./chain.js";
 import { createLogger } from "../logger.js";
+import { getChatModel } from "./chain.js";
 
 const log = createLogger("rag:query-rewriting");
 
