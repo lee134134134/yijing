@@ -24,13 +24,15 @@ const FILESYSTEM_TOOL_NAMES = ["ls", "read_file", "write_file", "edit_file", "gl
  * 回退到 `${model}`、`${provider}`。因此为当前模型名注册即可生效。
  */
 function registerD1Profile() {
-  registerHarnessProfile(config.llmModel, {
-    excludedTools: FILESYSTEM_TOOL_NAMES,
-  });
-  // 同时注册 provider:model 形式,确保模型名为纯自定义值时也能命中
-  registerHarnessProfile(`openai:${config.llmModel}`, {
-    excludedTools: FILESYSTEM_TOOL_NAMES,
-  });
+  for (const modelName of new Set([config.llmModel, config.deepModel])) {
+    registerHarnessProfile(modelName, {
+      excludedTools: FILESYSTEM_TOOL_NAMES,
+    });
+    // 同时注册 provider:model 形式,确保模型名为纯自定义值时也能命中
+    registerHarnessProfile(`openai:${modelName}`, {
+      excludedTools: FILESYSTEM_TOOL_NAMES,
+    });
+  }
 }
 
 /** deep_analyst 结构化输出 schema(对应 types.AnalysisResult) */
@@ -48,14 +50,25 @@ export const DEEP_ANALYST_RESPONSE_SCHEMA = z.object({
   suggestions: z.array(z.string()).optional(),
 });
 
-/** deep_analyst subagent(D4): /deep 深度分析,结构化 JSON 输出 */
+/** deep_analyst 专用模型:json_object 输出模式(zen 网关支持)强制模型输出 JSON 文本,无须 tool_choice,因此禁用 thinking 模式(zen 网关 thinking 与 tool_choice 互斥) */
+const deepAnalystModel = new ChatOpenAI({
+  model: config.deepModel,
+  temperature: config.llmTemperature,
+  modelKwargs: { thinking: { type: "disabled" }, response_format: { type: "json_object" } },
+  configuration: {
+    baseURL: config.openaiBaseUrl,
+    apiKey: config.openaiApiKey,
+  },
+});
+
+/** deep_analyst subagent(D4): /deep 深度分析,json_object 模式输出 JSON 文本,由 deepDeepAnalysis 手动解析 */
 const deepAnalyst: SubAgent = {
   name: "deep_analyst",
   description: "对复杂的中医/命理/养生问题进行深度多角度分析,输出结构化 JSON 结论。当用户请求深度分析时使用。",
   systemPrompt: DEEP_ANALYST_PROMPT,
   tools: [...allTools],
+  model: deepAnalystModel,
   middleware: [todoListMiddleware()],
-  responseFormat: DEEP_ANALYST_RESPONSE_SCHEMA,
 };
 
 let agentInstance: DeepAgent | null = null;
@@ -101,34 +114,22 @@ let analystInstance: ReactAgent | null = null;
  * 构建独立 deep_analyst agent(单例)
  *
  * /deep 深度分析不经过主 agent 的任务分配,而是直接调用编译后的
- * deep_analyst ReactAgent,其 responseFormat 保证 structuredResponse
- * 符合 DEEP_ANALYST_RESPONSE_SCHEMA,从而映射为 AnalysisResult。
+ * deep_analyst ReactAgent。其模型使用 json_object 输出模式,最终消息为
+ * JSON 文本,由 deepDeepAnalysis 手动解析为 DEEP_ANALYST_RESPONSE_SCHEMA。
  */
 export function buildDeepAnalystAgent(): ReactAgent {
   if (analystInstance) return analystInstance;
 
   registerD1Profile();
 
-  const model = new ChatOpenAI({
-    model: config.llmModel,
-    temperature: config.llmTemperature,
-    configuration: {
-      baseURL: config.openaiBaseUrl,
-      apiKey: config.openaiApiKey,
-    },
+  analystInstance = createSubAgent({
+    name: "deep_analyst",
+    description: "对复杂的中医/命理/养生问题进行深度多角度分析,输出结构化 JSON 结论。当用户请求深度分析时使用。",
+    systemPrompt: DEEP_ANALYST_PROMPT,
+    tools: [...allTools],
+    middleware: config.enableTodoPlanning ? [todoListMiddleware()] : [],
+    model: deepAnalystModel,
   });
-
-  analystInstance = createSubAgent(
-    {
-      name: "deep_analyst",
-      description: "对复杂的中医/命理/养生问题进行深度多角度分析,输出结构化 JSON 结论。当用户请求深度分析时使用。",
-      systemPrompt: DEEP_ANALYST_PROMPT,
-      tools: [...allTools],
-      middleware: config.enableTodoPlanning ? [todoListMiddleware()] : [],
-      model,
-    },
-    { responseFormat: DEEP_ANALYST_RESPONSE_SCHEMA },
-  );
 
   return analystInstance;
 }
