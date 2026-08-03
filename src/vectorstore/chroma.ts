@@ -38,9 +38,10 @@ let _collectionInitialized = false;
 
 /** ChromaDB metadata 仅支持标量类型 */
 function toScalarMetadata(meta: KnowledgeMetadata): Record<string, string> {
-  return Object.fromEntries(
-    Object.entries(meta).filter(([, v]) => v !== undefined && v !== null),
-  ) as Record<string, string>;
+  return Object.fromEntries(Object.entries(meta).filter(([, v]) => v !== undefined && v !== null)) as Record<
+    string,
+    string
+  >;
 }
 
 /**
@@ -179,11 +180,7 @@ export async function searchByDomain(
  *
  * RRF score = Σ 1/(k + rank),其中 rank 从 0 开始。
  */
-function rrfFuse(
-  entries: KnowledgeDocument[][],
-  topK: number,
-  k: number = 60,
-): KnowledgeDocument[] {
+function rrfFuse(entries: KnowledgeDocument[][], topK: number, k: number = 60): KnowledgeDocument[] {
   const fused = new Map<string, { doc: KnowledgeDocument; score: number }>();
   const seen = new Set<string>();
 
@@ -218,9 +215,7 @@ export async function multiQuerySearch(
   if (queries.length === 1) return searchKnowledge(queries[0]!, topK);
 
   try {
-    const allResults = await Promise.all(
-      queries.map((q) => searchKnowledge(q, topK * 2)),
-    );
+    const allResults = await Promise.all(queries.map((q) => searchKnowledge(q, topK * 2)));
     const fused = rrfFuse(allResults, topK);
     return fused;
   } catch (err) {
@@ -238,10 +233,7 @@ export async function multiQuerySearch(
  *
  * 每批次写入后记录进度。使用本地 Embedding 生成向量后直连 ChromaDB 写入。
  */
-export async function addDocumentsBatched(
-  docs: KnowledgeDocument[],
-  batchSize: number = 50,
-): Promise<number> {
+export async function addDocumentsBatched(docs: KnowledgeDocument[], batchSize: number = 50): Promise<number> {
   if (docs.length === 0) return 0;
 
   try {
@@ -250,9 +242,7 @@ export async function addDocumentsBatched(
     for (let i = 0; i < docs.length; i += batchSize) {
       const batch = docs.slice(i, i + batchSize);
       const embeddings = await getEmbeddings().embedDocuments(batch.map((d) => d.pageContent));
-      const ids = batch.map(
-        (_, j) => `doc_${Date.now()}_${i + j}_${Math.random().toString(36).slice(2, 8)}`,
-      );
+      const ids = batch.map((_, j) => `doc_${Date.now()}_${i + j}_${Math.random().toString(36).slice(2, 8)}`);
       await collection.add({
         ids,
         embeddings,

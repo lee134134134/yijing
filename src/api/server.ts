@@ -4,13 +4,13 @@
  * REST API + SSE 流式输出，供 Web 前端调用。
  */
 
-import Fastify from "fastify";
 import cors from "@fastify/cors";
+import Fastify from "fastify";
 import { config } from "../config.js";
 import { createLogger } from "../logger.js";
-import { queryRoutes } from "./routes/query.js";
 import { deepRoutes } from "./routes/deep.js";
 import { historyRoutes } from "./routes/history.js";
+import { queryRoutes } from "./routes/query.js";
 import { statusRoutes } from "./routes/status.js";
 
 const log = createLogger("api:server");

@@ -5,8 +5,8 @@
 import type { FastifyInstance } from "fastify";
 import { config } from "../../config.js";
 import { createLogger, createRequestContext, logRequestComplete } from "../../logger.js";
-import { getDocumentCount, listCollections } from "../../vectorstore/chroma.js";
 import type { StatusResponse } from "../../types.js";
+import { getDocumentCount, listCollections } from "../../vectorstore/chroma.js";
 
 const log = createLogger("api:routes:status");
 
@@ -25,6 +25,7 @@ export async function statusRoutes(server: FastifyInstance) {
         maxContextTokens: number;
         chunkSize: number;
         chunkOverlap: number;
+        agentMode: "deep" | "classic";
       } = {
         docCount,
         model: config.llmModel,
@@ -36,6 +37,7 @@ export async function statusRoutes(server: FastifyInstance) {
         maxContextTokens: config.maxContextTokens,
         chunkSize: config.chunkSize,
         chunkOverlap: config.chunkOverlap,
+        agentMode: config.agentMode,
       };
 
       logRequestComplete(rc, 200, { docCount, collections: collections.length });

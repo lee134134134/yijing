@@ -65,13 +65,7 @@ export const searchKnowledgeBaseTool = tool(
 输入应当是一个具体的中文问题或关键词。`,
     schema: z.object({
       query: z.string().describe("中文查询语句,应当具体明确"),
-      topK: z
-        .number()
-        .int()
-        .min(1)
-        .max(20)
-        .optional()
-        .describe("返回文档数量,默认 5"),
+      topK: z.number().int().min(1).max(20).optional().describe("返回文档数量,默认 5"),
     }),
   },
 );
@@ -93,17 +87,9 @@ export const searchByDomainTool = tool(
 当用户明确提到某个领域(如"伤寒论""命理八字"),或在跨领域分析中需要针对特定领域检索时使用。
 如果不确定领域,请使用 search_knowledge_base。`,
     schema: z.object({
-      domain: z
-        .enum(KNOWLEDGE_DOMAINS)
-        .describe("知识领域,必须是枚举列表中的值"),
+      domain: z.enum(KNOWLEDGE_DOMAINS).describe("知识领域,必须是枚举列表中的值"),
       query: z.string().describe("中文查询语句,应当具体明确"),
-      topK: z
-        .number()
-        .int()
-        .min(1)
-        .max(20)
-        .optional()
-        .describe("返回文档数量,默认 5"),
+      topK: z.number().int().min(1).max(20).optional().describe("返回文档数量,默认 5"),
     }),
   },
 );

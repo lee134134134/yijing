@@ -52,7 +52,7 @@ export async function queryRoutes(server: FastifyInstance) {
         const startTime = Date.now();
         const result = await agenticRag(trimmed, undefined, (chunk) => {
           const textData = JSON.stringify({ type: "text", data: chunk });
-          reply.raw.write("event: message\ndata: " + textData + "\n\n");
+          reply.raw.write(`event: message\ndata: ${textData}\n\n`);
         });
 
         const elapsed = (Date.now() - startTime) / 1000;
@@ -60,14 +60,14 @@ export async function queryRoutes(server: FastifyInstance) {
 
         // meta event（流结束后发送，内容已包含脚注）
         const meta = JSON.stringify({ type: "meta", queryType: result.queryType, docCount: result.docCount, label });
-        reply.raw.write("event: meta\ndata: " + meta + "\n\n");
+        reply.raw.write(`event: meta\ndata: ${meta}\n\n`);
 
         // done event
         const doneData = JSON.stringify({
           type: "done",
           data: { response: result.response, queryType: result.queryType, docCount: result.docCount, elapsed },
         });
-        reply.raw.write("event: done\ndata: " + doneData + "\n\n");
+        reply.raw.write(`event: done\ndata: ${doneData}\n\n`);
         reply.raw.end();
 
         logRequestComplete(rc, 200, { queryType: result.queryType, docCount: result.docCount, elapsed });

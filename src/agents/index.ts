@@ -12,11 +12,7 @@
 import { config } from "../config.js";
 import { classifyQuery } from "../rag/chain.js";
 import type { AnalysisResult, QueryType } from "../types.js";
-import {
-  buildDeepAgent,
-  buildDeepAnalystAgent,
-  DEEP_ANALYST_RESPONSE_SCHEMA,
-} from "./deep-agent.js";
+import { buildDeepAgent, buildDeepAnalystAgent, DEEP_ANALYST_RESPONSE_SCHEMA } from "./deep-agent.js";
 import { legacyAgenticRag, legacyDeepAnalysis } from "./legacy.js";
 
 /** 检索工具名(用于 docCount 统计) */
@@ -48,10 +44,7 @@ function parseChatHistory(chatHistory?: string): Array<{ role: "user" | "assista
 }
 
 /** 从 agent 最终状态提取最后一条 assistant 消息文本 */
-function extractFinalText(
-  state: { messages?: Array<{ content?: unknown }> },
-  streamed: string,
-): string {
+function extractFinalText(state: { messages?: Array<{ content?: unknown }> }, streamed: string): string {
   const last = state.messages?.at(-1);
   if (typeof last?.content === "string" && last.content.trim()) return last.content;
   return streamed;
@@ -72,10 +65,7 @@ async function deepAgenticRag(
 ): Promise<{ response: string; queryType: QueryType; docCount: number }> {
   const queryType = await classifyQuery(input);
 
-  const messages = [
-    ...parseChatHistory(chatHistory),
-    { role: "user" as const, content: input },
-  ];
+  const messages = [...parseChatHistory(chatHistory), { role: "user" as const, content: input }];
 
   const agent = buildDeepAgent();
   const run = await agent.streamEvents({ messages }, { version: "v3" });
@@ -110,8 +100,7 @@ async function deepAgenticRag(
   // 空结果回退: 无检索调用且回答无引用 → 与旧管线一致的提示语
   const hasCitation = /\[ref-\d+\]/.test(responseText) || responseText.includes("参考来源");
   if (retrievalCalls === 0 && !hasCitation) {
-    const fallback =
-      "知识库中暂未检索到与您问题直接相关的内容。请尝试换一种表述方式,或提出更具体的问题。";
+    const fallback = "知识库中暂未检索到与您问题直接相关的内容。请尝试换一种表述方式,或提出更具体的问题。";
     if (onToken) onToken(fallback);
     return { response: fallback, queryType, docCount: 0 };
   }

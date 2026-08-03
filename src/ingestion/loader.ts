@@ -3,7 +3,7 @@ import path from "node:path";
 import { Document } from "@langchain/core/documents";
 import { RecursiveCharacterTextSplitter } from "@langchain/textsplitters";
 import { config } from "../config.js";
-import { YijingError, ErrorCode } from "../errors.js";
+import { ErrorCode, YijingError } from "../errors.js";
 import type { KnowledgeDocument, KnowledgeMetadata } from "../types.js";
 
 /**

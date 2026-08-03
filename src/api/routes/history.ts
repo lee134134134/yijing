@@ -4,7 +4,7 @@
  */
 
 import type { FastifyInstance } from "fastify";
-import { getRecentHistory, clearHistory } from "../../conversation/index.js";
+import { clearHistory, getRecentHistory } from "../../conversation/index.js";
 import { createLogger, createRequestContext, logRequestComplete } from "../../logger.js";
 
 const log = createLogger("api:routes:history");
