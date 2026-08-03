@@ -178,10 +178,21 @@ export async function chunkDocuments(rawDocs: KnowledgeDocument[]): Promise<Know
   });
 
   const rawChunks = await textSplitter.splitDocuments(sections);
+  // splitDocuments 会向 metadata 注入内部字段 loc(对象),ChromaDB 仅接受标量值,
+  // 因此显式挑选业务字段重建 metadata
   const chunks = rawChunks.map((d: Document) => {
+    const meta = d.metadata as Record<string, unknown>;
+    const metadata: KnowledgeMetadata = {
+      source: meta.source as string,
+      domain: meta.domain as string,
+      h1: meta.h1 as string | undefined,
+      h2: meta.h2 as string | undefined,
+      h3: meta.h3 as string | undefined,
+      lineRange: meta.lineRange as string | undefined,
+    };
     return new Document<KnowledgeMetadata>({
       pageContent: d.pageContent,
-      metadata: d.metadata as unknown as KnowledgeMetadata,
+      metadata,
     });
   });
   console.log(`  最终分块: ${chunks.length} 个知识块`);

@@ -1,6 +1,6 @@
 import { Document } from "@langchain/core/documents";
 import { describe, expect, it } from "vitest";
-import { extractSections, inferDomain } from "../ingestion/loader.js";
+import { chunkDocuments, extractSections, inferDomain } from "../ingestion/loader.js";
 import type { KnowledgeDocument } from "../types.js";
 
 // ========================================
@@ -107,5 +107,39 @@ describe("extractSections", () => {
     // Content length >= 10, so it becomes 1 section
     expect(sections).toHaveLength(1);
     expect(sections[0].pageContent).toContain("纯文本内容");
+  });
+});
+
+// ========================================
+// chunkDocuments (loc 清理回归)
+// ========================================
+
+describe("chunkDocuments", () => {
+  it("strips splitter-injected loc metadata that ChromaDB rejects", async () => {
+    const doc = new Document({
+      pageContent: `# 伤寒论\n\n## 太阳病\n\n${"太阳之为病，脉浮。".repeat(60)}`,
+      metadata: {
+        source: "test.md",
+        domain: "伤寒论",
+        loc: { lines: { from: 1, to: 10 } },
+      },
+    });
+    const chunks = await chunkDocuments([doc as unknown as KnowledgeDocument]);
+    expect(chunks.length).toBeGreaterThan(0);
+    for (const chunk of chunks) {
+      expect(chunk.metadata).not.toHaveProperty("loc");
+      expect(Object.values(chunk.metadata).every((v) => typeof v !== "object" || v === null)).toBe(true);
+    }
+  });
+
+  it("preserves business metadata fields across chunking", async () => {
+    const doc = new Document({
+      pageContent: `# 方剂\n\n## 桂枝汤\n\n${"桂枝三两，芍药三两，甘草二两。".repeat(60)}`,
+      metadata: { source: "fangji.md", domain: "方剂" },
+    });
+    const chunks = await chunkDocuments([doc as unknown as KnowledgeDocument]);
+    expect(chunks.length).toBeGreaterThan(0);
+    expect(chunks[0].metadata.source).toBe("fangji.md");
+    expect(chunks[0].metadata.domain).toBe("方剂");
   });
 });
