@@ -1,6 +1,6 @@
 # 倪海厦知识库 - Agentic RAG
 
-基于倪海厦人纪/天纪系列知识库的 Agentic RAG（检索增强生成）命令行工具，使用 LangChain.js 实现。
+基于倪海厦人纪/天纪系列知识库的 Agentic RAG（检索增强生成）命令行工具。默认使用 **DeepAgent.js 多智能体框架**（LangChain 1.x 之上），并保留旧确定性 RAG 管线作为 `AGENT_MODE=classic` 回退。
 
 ## 快速开始
 
@@ -40,6 +40,16 @@ npx tsx src/index.ts "桂枝汤的组成和适应症是什么？"
 | `ENABLE_RERANKING` | `false` | 启用 LLM 重排序 |
 | `MAX_HISTORY` | `200` | 对话历史最大保留条数 |
 | `KNOWLEDGE_DIR` | `./memory` | 知识库 Markdown 目录 |
+| `AGENT_MODE` | `deep` | 代理模式：`deep`（DeepAgent.js 多智能体）或 `classic`（旧确定性 RAG 管线） |
+
+## 代理模式
+
+`AGENT_MODE` 控制问答编排方式：
+
+| 模式 | 说明 |
+|------|------|
+| `deep`（默认） | DeepAgent.js 多智能体：`createDeepAgent` 深度代理自主检索（`search_knowledge_base` / `search_by_domain` 工具）+ 流式输出；`/deep` 由 `deep_analyst` 子代理输出结构化 5 字段 JSON |
+| `classic` | 旧确定性 RAG 管线：查询重写 → 多路检索 → 重排序 → 生成，作为回退方案保留 |
 
 ## 命令
 
@@ -70,8 +80,11 @@ src/
   rag/
     chain.ts             RAG 检索链 + 查询分类
   agents/
-    index.ts             Agentic RAG 编排 + 深度分析
-    tools.ts             Agent 工具函数
+    index.ts             Agent 编排入口（双模式分发）
+    deep-agent.ts        DeepAgent.js 深度代理（agenticRag / deepAnalysis）
+    legacy.ts            旧确定性 RAG 管线（AGENT_MODE=classic 回退）
+    tools.ts             Agent 工具函数（search_knowledge_base / search_by_domain）
+    prompts.ts           DeepAgent 系统提示词
   conversation/
     store.ts             对话持久化存储
 memory/                  知识库 Markdown 文件
