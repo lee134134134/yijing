@@ -7,6 +7,7 @@
  * 响应结构兼容(引用 [ref-N] 脚注由 deep 系统提示词保证)。
  */
 
+import { config } from "../config.js";
 import { classifyQuery } from "../rag/chain.js";
 import type { AnalysisResult, QueryType } from "../types.js";
 import { buildDeepAgent, buildDeepAnalystAgent, DEEP_ANALYST_RESPONSE_SCHEMA } from "./deep-agent.js";
@@ -64,7 +65,7 @@ async function deepAgenticRag(
   const messages = [...parseChatHistory(chatHistory), { role: "user" as const, content: input }];
 
   const agent = buildDeepAgent();
-  const run = await agent.streamEvents({ messages }, { version: "v3" });
+  const run = await agent.streamEvents({ messages }, { version: "v3", recursionLimit: config.deepAgentMaxIterations });
 
   let streamedText = "";
   let docCount = 0;
@@ -107,25 +108,40 @@ async function deepAgenticRag(
 /**
  * deep 模式 deepAnalysis 实现
  *
- * 直接调用独立编译的 deep_analyst agent,其 responseFormat 保证
- * structuredResponse 符合 DEEP_ANALYST_RESPONSE_SCHEMA。
+ * 直接调用独立编译的 deep_analyst agent。其模型使用 json_object 输出模式,
+ * 最终消息为 JSON 文本,这里手动解析并校验为 DEEP_ANALYST_RESPONSE_SCHEMA。
  * 解析失败时回退为文本结论(与旧管线 fallback 语义一致)。
  */
 async function deepDeepAnalysis(input: string): Promise<AnalysisResult> {
   const agent = buildDeepAnalystAgent();
-  const result = await agent.invoke({ messages: [{ role: "user", content: input }] });
-
-  const parsed = DEEP_ANALYST_RESPONSE_SCHEMA.safeParse(result.structuredResponse);
-  if (parsed.success) return parsed.data;
+  const result = await agent.invoke(
+    { messages: [{ role: "user", content: input }] },
+    { recursionLimit: config.deepAgentMaxIterations },
+  );
 
   const last = result.messages.at(-1);
   const text = typeof last?.content === "string" ? last.content : "";
+  const parsed = DEEP_ANALYST_RESPONSE_SCHEMA.safeParse(parseJsonText(text));
+  if (parsed.success) return parsed.data;
+
   return {
     conclusion: text || "分析失败,请重试。",
     reasoning: "",
     references: [],
     confidence: 0.5,
   };
+}
+
+/** 从模型输出文本中提取 JSON 对象(兼容 ```json 代码块包裹) */
+function parseJsonText(text: string): unknown {
+  const trimmed = text.trim();
+  const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/);
+  const candidate = fenced?.[1] ?? trimmed;
+  try {
+    return JSON.parse(candidate) as unknown;
+  } catch {
+    return null;
+  }
 }
 
 /**

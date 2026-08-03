@@ -12,6 +12,8 @@ export const config = {
   openaiBaseUrl: process.env.OPENAI_BASE_URL || "https://api.openai.com/v1",
   openaiApiKey: process.env.OPENAI_API_KEY || "",
   llmModel: process.env.LLM_MODEL || "gpt-4o-mini",
+  /** /deep 深度分析独立模型:结构化输出强制 tool_choice,部分 thinking 模型不支持 */
+  deepModel: process.env.DEEP_MODEL || process.env.LLM_MODEL || "gpt-4o-mini",
   llmTemperature: parseFloat(process.env.LLM_TEMPERATURE || "0.3"),
   llmMaxRetries: parseInt(process.env.LLM_MAX_RETRIES || "3", 10),
   llmRetryBaseDelay: parseInt(process.env.LLM_RETRY_BASE_DELAY || "2000", 10),

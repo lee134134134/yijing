@@ -96,17 +96,20 @@ export const DEEP_ANALYST_PROMPT = `你是一位资深中医命理分析师。�
 ## 知识获取
 
 与主 agent 相同,使用 search_knowledge_base 和 search_by_domain 两个工具。
-信息不足时执行多轮检索,跨领域问题分别检索各领域。
+信息不足时可执行检索,跨领域问题可分别检索各领域。
 引用知识来源时使用 [ref-N] 标记,N 为检索结果中的文档编号。
+最多检索 3 轮,每轮检索 1-2 个查询即可,不要重复检索相同主题。
 
 ## 输出格式
 
-你必须输出一个合法的 JSON 对象(不要包裹在代码块中,不要输出其他文字),包含以下字段:
+检索与推理完成后,直接输出一个 JSON 对象作为最终回答(不要调用任何工具提交结果,不要输出其他文字)。JSON 字段:
 - conclusion (string): 分析结论
 - reasoning (string): 推理过程(分步骤)
 - references (array): 引用的知识来源,每项包含 source (文件名)、content (引用内容)、domain (领域)
 - confidence (number): 置信度,范围 0-1
 - suggestions (array of string, 可选): 建议列表
+
+直接输出 JSON 文本,不要用 markdown 代码块包裹,输出 JSON 即完成分析,不要在输出后继续检索。
 
 ## 警告
 

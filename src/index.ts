@@ -262,6 +262,34 @@ async function interactiveLoop() {
 
 async function singleQuery(query: string) {
   try {
+    // 单次查询同样支持 /deep 命令(与交互模式一致)
+    if (query.trim().startsWith("/deep")) {
+      const deepQuery = query.trim().replace(/^\/deep\s*/, "");
+      if (!deepQuery) {
+        console.log("用法: /deep <问题>");
+        return;
+      }
+      addMessage({ role: "user", content: `[深度] ${deepQuery}` });
+      const result = await deepAnalysis(deepQuery);
+      console.log(`${color(`[深度分析] 参考 ${result.references.length} 篇`, GREEN)}`);
+      console.log("-".repeat(50));
+      console.log(color("结论:", BOLD));
+      console.log(result.conclusion);
+      if (result.reasoning) {
+        console.log(`\n${color("推理过程:", BOLD)}`);
+        console.log(result.reasoning);
+      }
+      if (result.references.length > 0) {
+        console.log(`\n${color("参考来源:", GRAY)}`);
+        for (const r of result.references) {
+          console.log(`  ${color(r.source, CYAN)} [${r.domain}]`);
+        }
+      }
+      console.log("-".repeat(50));
+      addMessage({ role: "assistant", content: result.conclusion, queryType: "deep_analysis" });
+      return;
+    }
+
     addMessage({ role: "user", content: query });
     const result = await agenticRag(query);
     const label = QUERY_TYPES_LABEL[result.queryType] || "知识问答";

@@ -233,16 +233,19 @@ describe("agenticRag (deep mode)", () => {
 // deepAnalysis (deep mode)
 // ================================================================
 describe("deepAnalysis (deep mode)", () => {
-  it("returns AnalysisResult mapped from structuredResponse", async () => {
+  it("returns AnalysisResult parsed from json_object final message", async () => {
     vi.mocked(h.analyst.invoke).mockResolvedValue({
-      structuredResponse: {
-        conclusion: "脾肾阳虚,治宜温补脾肾",
-        reasoning: "1. 阳虚则寒...",
-        references: [{ source: "zhongyi_xin.md", content: "脾肾阳虚...", domain: "中医临床" }],
-        confidence: 0.85,
-        suggestions: ["附子理中丸", "艾灸关元"],
-      },
-      messages: [{ content: "ignored" }],
+      messages: [
+        {
+          content: JSON.stringify({
+            conclusion: "脾肾阳虚,治宜温补脾肾",
+            reasoning: "1. 阳虚则寒...",
+            references: [{ source: "zhongyi_xin.md", content: "脾肾阳虚...", domain: "中医临床" }],
+            confidence: 0.85,
+            suggestions: ["附子理中丸", "艾灸关元"],
+          }),
+        },
+      ],
     });
 
     const result = await deepAnalysis("分析脾肾阳虚的辨证要点");
@@ -263,9 +266,8 @@ describe("deepAnalysis (deep mode)", () => {
     expect(buildDeepAnalystAgent()).toBe(h.analyst);
   });
 
-  it("falls back to last message text when structuredResponse is invalid", async () => {
+  it("falls back to last message text when content is not valid JSON", async () => {
     vi.mocked(h.analyst.invoke).mockResolvedValue({
-      structuredResponse: "not a valid structured object",
       messages: [{ content: "文本形式的结果" }],
     });
 
