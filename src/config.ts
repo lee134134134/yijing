@@ -16,9 +16,7 @@ export const config = {
   llmMaxRetries: parseInt(process.env.LLM_MAX_RETRIES || "3", 10),
   llmRetryBaseDelay: parseInt(process.env.LLM_RETRY_BASE_DELAY || "2000", 10),
 
-  // ── Agent 模式 ──
-  /** deep: DeepAgent.js 编排(默认); classic: 旧确定性管线 */
-  agentMode: (process.env.AGENT_MODE || "deep") as "deep" | "classic",
+  // ── Agent ──
   /** DeepAgent 最大迭代轮数(控成本) */
   deepAgentMaxIterations: parseInt(process.env.DEEP_AGENT_MAX_ITERATIONS || "25", 10),
   /** 是否启用 todoListMiddleware(任务规划中间件) */

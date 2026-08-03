@@ -3,7 +3,6 @@
  *
  * Mocks the deepagents boundary (createDeepAgent / createSubAgent) with
  * controllable fake agents, so tests run without LLM/ChromaDB/network.
- * The classic (legacy) pipeline is covered by D2-B fallback tests.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -21,7 +20,6 @@ const h = vi.hoisted(() => {
 
 vi.mock("../config.js", () => ({
   config: {
-    agentMode: "deep",
     enableQueryRewrite: true,
     rewriteNumQueries: 3,
     retrievalTopK: 5,
