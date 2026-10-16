@@ -8,7 +8,9 @@
 
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
-import { searchByDomain, searchKnowledge } from "../vectorstore/chroma.js";
+import { config } from "../config.js";
+import { rewriteQuery } from "../rag/query-rewriting.js";
+import { multiQuerySearch, searchByDomain, searchKnowledge } from "../vectorstore/chroma.js";
 
 /** 知识库领域枚举(与 ingestion 的 inferDomain 保持一致) */
 export const KNOWLEDGE_DOMAINS = [
@@ -48,6 +50,19 @@ ${doc.pageContent.slice(0, DOC_TRUNCATE)}`,
 }
 
 /**
+ * 通用检索入口
+ *
+ * 开启 ENABLE_QUERY_REWRITE 时(默认开启):先用 LLM 把口语化查询改写为
+ * 多个检索友好子查询,再经 RRF 多查询融合提升召回;rewriteQuery 内部
+ * 失败时自动回退原查询,不会阻断检索。否则直连单查询检索。
+ */
+async function retrieveKnowledge(query: string, topK: number) {
+  if (!config.enableQueryRewrite) return searchKnowledge(query, topK);
+  const rewritten = await rewriteQuery(query, config.rewriteNumQueries);
+  return multiQuerySearch(rewritten.all, topK);
+}
+
+/**
  * 知识库通用搜索工具
  *
  * 输入一个中文查询语句,返回相关的知识段落。
@@ -55,7 +70,7 @@ ${doc.pageContent.slice(0, DOC_TRUNCATE)}`,
  */
 export const searchKnowledgeBaseTool = tool(
   async ({ query, topK }) => {
-    const docs = await searchKnowledge(query, topK ?? 5);
+    const docs = await retrieveKnowledge(query, topK ?? 5);
     return formatDocs(docs);
   },
   {

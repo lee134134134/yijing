@@ -15,7 +15,7 @@
  */
 
 import { Document } from "@langchain/core/documents";
-import { ChromaClient, type Collection } from "chromadb";
+import { ChromaClient, type Collection, type Where } from "chromadb";
 import { config } from "../config.js";
 import { StoreError } from "../errors.js";
 import { createLogger } from "../logger.js";
@@ -24,13 +24,42 @@ import { getEmbeddings } from "./embeddings.js";
 
 const log = createLogger("vectorstore:chroma");
 
+/** 检索结果缓存上限(知识库 ingest 后为静态数据,重复查询零成本命中) */
+const SEARCH_CACHE_MAX = 100;
+/**
+ * searchKnowledge 结果缓存(key = `${topK}:${query}`,LRU)
+ *
+ * ingest 是唯一的写入口,addDocumentsBatched / clearAll / resetStore 会显式失效;
+ * 缓存仅共享 Document 的只读视图(pageContent/metadata),调用方不得修改。
+ */
+const searchCache = new Map<string, KnowledgeDocument[]>();
+
+/** 检索缓存 key */
+function searchCacheKey(query: string, topK: number): string {
+  return `${topK}:${query}`;
+}
+
+/** 写入检索缓存并做 LRU 淘汰 */
+function cacheSearchResult(key: string, docs: KnowledgeDocument[]): void {
+  searchCache.set(key, docs);
+  while (searchCache.size > SEARCH_CACHE_MAX) {
+    const oldest = searchCache.keys().next().value;
+    if (oldest === undefined) break;
+    searchCache.delete(oldest);
+  }
+}
+
+/** 知识库内容变更后失效检索缓存(ingest / clearAll / resetStore) */
+function invalidateSearchCache(): void {
+  searchCache.clear();
+}
+
 // ========================================
 // 连接管理(单例)
 // ========================================
 
-/** ChromaDB metadata filter (Where type) */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type WhereFilter = Record<string, any>;
+/** ChromaDB metadata filter */
+type WhereFilter = Where;
 
 let _client: ChromaClient | null = null;
 let _collection: Collection | null = null;
@@ -109,6 +138,15 @@ export async function searchKnowledge(
   query: string,
   topK: number = config.retrievalTopK,
 ): Promise<KnowledgeDocument[]> {
+  const cacheKey = searchCacheKey(query, topK);
+  const cached = searchCache.get(cacheKey);
+  if (cached) {
+    // LRU:命中后刷新位置
+    searchCache.delete(cacheKey);
+    searchCache.set(cacheKey, cached);
+    return cached;
+  }
+
   try {
     const collection = await getCollection();
     const queryEmbedding = await getEmbeddings().embedQuery(query);
@@ -125,10 +163,11 @@ export async function searchKnowledge(
     }
 
     log.debug({ query, results: docs.length }, "Search completed");
+    cacheSearchResult(cacheKey, docs);
     return docs;
   } catch (err) {
     log.error({ err, query }, "Search failed");
-    // 降级:返回空结果,由调用方处理
+    // 降级:返回空结果,由调用方处理(失败不入缓存)
     return [];
   }
 }
@@ -147,7 +186,7 @@ export async function searchByDomain(
   try {
     const collection = await getCollection();
     const queryEmbedding = await getEmbeddings().embedQuery(query);
-    const filter: WhereFilter = { domain: { $eq: domain } };
+    const filter: WhereFilter = { domain: { $eq: domain } } as WhereFilter;
     const result = await collection.query({
       queryEmbeddings: [queryEmbedding],
       nResults: topK,
@@ -252,6 +291,8 @@ export async function addDocumentsBatched(docs: KnowledgeDocument[], batchSize: 
       total += batch.length;
       log.info({ progress: `${total}/${docs.length}` }, "Batch written");
     }
+    // 知识库内容变更,失效检索缓存
+    invalidateSearchCache();
     return total;
   } catch (err) {
     log.error({ err }, "Failed to add documents");
@@ -308,6 +349,7 @@ export async function clearAll(): Promise<void> {
     await getClient().deleteCollection({ name: config.chromaCollectionName });
     _collection = null;
     _collectionInitialized = false;
+    invalidateSearchCache();
     log.info("Collection deleted");
   } catch (err) {
     log.error({ err }, "Failed to clear collection");
@@ -323,4 +365,5 @@ export function resetStore(): void {
   _client = null;
   _collection = null;
   _collectionInitialized = false;
+  invalidateSearchCache();
 }
