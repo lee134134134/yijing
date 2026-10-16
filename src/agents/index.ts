@@ -8,9 +8,27 @@
  */
 
 import { config } from "../config.js";
+import { createLogger } from "../logger.js";
 import { classifyQuery } from "../rag/chain.js";
 import type { AnalysisResult, QueryType } from "../types.js";
 import { buildDeepAgent, buildDeepAnalystAgent, DEEP_ANALYST_RESPONSE_SCHEMA } from "./deep-agent.js";
+
+const log = createLogger("agents");
+
+/**
+ * 分类查询类型(安全版)
+ *
+ * 分类结果仅用于 meta 标签与响应字段,失败时必须回退 unknown,
+ * 绝不允许把一次分类 LLM 调用的失败变成整个问答的失败。
+ */
+async function safeClassifyQuery(question: string): Promise<QueryType> {
+  try {
+    return await classifyQuery(question);
+  } catch (err) {
+    log.warn({ err }, "Query classification failed, falling back to unknown");
+    return "unknown";
+  }
+}
 
 /** 检索工具名(用于 docCount 统计) */
 const RETRIEVAL_TOOL_NAMES = new Set(["search_knowledge_base", "search_by_domain"]);
@@ -22,12 +40,33 @@ function countSourceDocs(output: unknown): number {
   return matches?.length ?? 0;
 }
 
+/** 对话历史中的一条消息 */
+type ChatMessage = { role: "user" | "assistant"; content: string };
+
+function isChatMessage(value: unknown): value is ChatMessage {
+  if (typeof value !== "object" || value === null) return false;
+  const v = value as { role?: unknown; content?: unknown };
+  return (v.role === "user" || v.role === "assistant") && typeof v.content === "string";
+}
+
 /**
- * 解析对话历史字符串("问: xxx\n答: xxx" 格式)为消息数组
+ * 解析对话历史为消息数组
+ *
+ * 优先按 JSON 消息数组解析(getHistoryForContext 现行输出);
+ * 兼容旧 "问: xxx\n答: xxx" 文本格式(该格式在内容含 "\n问: " 时会误切分,
+ * 仅作向后兼容保留)。
  */
-function parseChatHistory(chatHistory?: string): Array<{ role: "user" | "assistant"; content: string }> {
+function parseChatHistory(chatHistory?: string): ChatMessage[] {
   if (!chatHistory) return [];
-  const messages: Array<{ role: "user" | "assistant"; content: string }> = [];
+  try {
+    const parsed: unknown = JSON.parse(chatHistory);
+    if (Array.isArray(parsed)) {
+      return parsed.filter(isChatMessage);
+    }
+  } catch {
+    // 非 JSON,按旧文本格式继续解析
+  }
+  const messages: ChatMessage[] = [];
   for (const line of chatHistory.split("\n")) {
     const m = line.match(/^(问|答): (.*)$/);
     if (m) {
@@ -54,13 +93,17 @@ function extractFinalText(state: { messages?: Array<{ content?: unknown }> }, st
  * - run.messages: 逐段输出最终回答文本(调 onToken)
  * - run.toolCalls: 统计检索工具调用,近似 docCount
  * - run.output: 最终状态,取完整回答文本
+ *
+ * 查询分类与 agent 运行并行发起:分类只贡献 meta 标签,
+ * 不应阻塞首 token(此前为串行等待一次完整 LLM 往返,每请求 +1~3s)。
  */
 async function deepAgenticRag(
   input: string,
   chatHistory?: string,
   onToken?: (chunk: string) => void,
 ): Promise<{ response: string; queryType: QueryType; docCount: number }> {
-  const queryType = await classifyQuery(input);
+  // 分类与 agent 并行;safeClassifyQuery 保证不会 reject
+  const classifyPromise = safeClassifyQuery(input);
 
   const messages = [...parseChatHistory(chatHistory), { role: "user" as const, content: input }];
 
@@ -93,6 +136,7 @@ async function deepAgenticRag(
 
   const state = await run.output;
   const responseText = extractFinalText(state, streamedText);
+  const queryType = await classifyPromise;
 
   // 空结果回退: 无检索调用且回答无引用 → 与旧管线一致的提示语
   const hasCitation = /\[ref-\d+\]/.test(responseText) || responseText.includes("参考来源");

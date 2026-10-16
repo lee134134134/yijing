@@ -52,6 +52,7 @@ vi.mock("../config.js", () => ({
 
 vi.mock("../rag/chain.js", () => ({
   classifyQuery: vi.fn().mockResolvedValue("tcm_diagnosis"),
+  getChatModel: vi.fn(() => ({ mockChatModel: true })),
 }));
 
 vi.mock("../vectorstore/chroma.js", () => ({
@@ -146,7 +147,18 @@ describe("agenticRag (deep mode)", () => {
     expect(classifyQuery).toHaveBeenCalledWith("头痛怎么办");
   });
 
-  it("builds messages from chatHistory and current input", async () => {
+  it("classification failure does not break the main flow (falls back to unknown)", async () => {
+    const { classifyQuery } = await import("../rag/chain.js");
+    vi.mocked(classifyQuery).mockRejectedValueOnce(new Error("LLM unavailable"));
+
+    const result = await agenticRag("头痛怎么办");
+
+    // 主链路照常完成,分类降级为 unknown
+    expect(result.response).toBeTruthy();
+    expect(result.queryType).toBe("unknown");
+  });
+
+  it("builds messages from legacy 问:/答: chatHistory (backward compat)", async () => {
     const { agent } = h;
     await agenticRag("具体怎么用", "问: 什么是桂枝汤\n答: 桂枝汤是解表剂");
 
@@ -155,6 +167,23 @@ describe("agenticRag (deep mode)", () => {
     expect(input.messages).toEqual([
       { role: "user", content: "什么是桂枝汤" },
       { role: "assistant", content: "桂枝汤是解表剂" },
+      { role: "user", content: "具体怎么用" },
+    ]);
+  });
+
+  it("builds messages from JSON chatHistory without splitting content lines", async () => {
+    const { agent } = h;
+    const history = JSON.stringify([
+      { role: "user", content: "什么是桂枝汤" },
+      { role: "assistant", content: "歌诀:\n问: 内容中的前缀行\n答: 不应被切成两条消息" },
+    ]);
+
+    await agenticRag("具体怎么用", history);
+
+    const [input] = agent.streamEvents.mock.calls[0];
+    expect(input.messages).toEqual([
+      { role: "user", content: "什么是桂枝汤" },
+      { role: "assistant", content: "歌诀:\n问: 内容中的前缀行\n答: 不应被切成两条消息" },
       { role: "user", content: "具体怎么用" },
     ]);
   });

@@ -4,22 +4,31 @@
  * Verifies search_knowledge_base / search_by_domain output format:
  * 【来源】 source anchor line, truncation, and empty-result messaging.
  */
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { searchByDomainTool, searchKnowledgeBaseTool } from "../agents/tools.js";
 
 vi.mock("../vectorstore/chroma.js", () => ({
   searchKnowledge: vi.fn(),
   searchByDomain: vi.fn(),
+  multiQuerySearch: vi.fn(),
+}));
+
+vi.mock("../rag/query-rewriting.js", () => ({
+  rewriteQuery: vi.fn(),
 }));
 
 vi.mock("../config.js", () => ({
   config: {
     retrievalTopK: 5,
     llmModel: "gpt-4o-mini",
+    enableQueryRewrite: false,
+    rewriteNumQueries: 3,
   },
 }));
 
-import { searchByDomain, searchKnowledge } from "../vectorstore/chroma.js";
+import { config } from "../config.js";
+import { rewriteQuery } from "../rag/query-rewriting.js";
+import { multiQuerySearch, searchByDomain, searchKnowledge } from "../vectorstore/chroma.js";
 
 const mkDoc = (over: Partial<{ pageContent: string; source: string; h2: string; domain: string }> = {}) => ({
   pageContent: over.pageContent ?? "桂枝汤方：桂枝三两，芍药三两，甘草二两，生姜三两，大枣十二枚。",
@@ -103,5 +112,42 @@ describe("search_by_domain", () => {
   it("rejects domains outside the enum", async () => {
     // @ts-expect-error 领域必须是枚举值
     await expect(searchByDomainTool.invoke({ domain: "不存在的领域", query: "x" })).rejects.toThrow();
+  });
+});
+
+describe("query rewrite wiring (ENABLE_QUERY_REWRITE)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    (config as { enableQueryRewrite: boolean }).enableQueryRewrite = false;
+  });
+
+  it("disabled: calls searchKnowledge directly without rewriting", async () => {
+    vi.mocked(searchKnowledge).mockResolvedValue([mkDoc()]);
+
+    await searchKnowledgeBaseTool.invoke({ query: "失眠" });
+
+    expect(searchKnowledge).toHaveBeenCalledWith("失眠", 5);
+    expect(rewriteQuery).not.toHaveBeenCalled();
+    expect(multiQuerySearch).not.toHaveBeenCalled();
+  });
+
+  it("enabled: rewrites query then fuses multiple queries via RRF", async () => {
+    (config as { enableQueryRewrite: boolean }).enableQueryRewrite = true;
+    vi.mocked(rewriteQuery).mockResolvedValue({
+      primary: "失眠中医辨证",
+      alternatives: ["不寐中医调理"],
+      all: ["失眠中医辨证", "不寐中医调理"],
+    });
+    vi.mocked(multiQuerySearch).mockResolvedValue([mkDoc({ source: "fusion.md" })]);
+
+    const output = await searchKnowledgeBaseTool.invoke({ query: "最近老睡不好怎么办", topK: 3 });
+
+    expect(rewriteQuery).toHaveBeenCalledWith("最近老睡不好怎么办", 3);
+    expect(multiQuerySearch).toHaveBeenCalledWith(["失眠中医辨证", "不寐中医调理"], 3);
+    expect(searchKnowledge).not.toHaveBeenCalled();
+    expect(output).toContain("【来源】fusion.md");
   });
 });

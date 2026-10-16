@@ -5,12 +5,12 @@
  * 提供 buildDeepAgent() 单例,避免每次问答重复构建(冷启动优化)。
  */
 
-import { ChatOpenAI } from "@langchain/openai";
 import { createDeepAgent, createSubAgent, type DeepAgent, registerHarnessProfile, type SubAgent } from "deepagents";
 import type { ReactAgent } from "langchain";
 import { todoListMiddleware } from "langchain";
 import { z } from "zod";
 import { config } from "../config.js";
+import { getChatModel } from "../rag/chain.js";
 import { DEEP_ANALYST_PROMPT, DEEP_SYSTEM_PROMPT } from "./prompts.js";
 import { allTools } from "./tools.js";
 
@@ -51,14 +51,9 @@ export const DEEP_ANALYST_RESPONSE_SCHEMA = z.object({
 });
 
 /** deep_analyst 专用模型:json_object 输出模式(zen 网关支持)强制模型输出 JSON 文本,无须 tool_choice,因此禁用 thinking 模式(zen 网关 thinking 与 tool_choice 互斥) */
-const deepAnalystModel = new ChatOpenAI({
+const deepAnalystModel = getChatModel({
   model: config.deepModel,
-  temperature: config.llmTemperature,
   modelKwargs: { thinking: { type: "disabled" }, response_format: { type: "json_object" } },
-  configuration: {
-    baseURL: config.openaiBaseUrl,
-    apiKey: config.openaiApiKey,
-  },
 });
 
 /** deep_analyst subagent(D4): /deep 深度分析,json_object 模式输出 JSON 文本,由 deepDeepAnalysis 手动解析 */
@@ -87,14 +82,7 @@ export function buildDeepAgent(): DeepAgent {
 
   registerD1Profile();
 
-  const model = new ChatOpenAI({
-    model: config.llmModel,
-    temperature: config.llmTemperature,
-    configuration: {
-      baseURL: config.openaiBaseUrl,
-      apiKey: config.openaiApiKey,
-    },
-  });
+  const model = getChatModel();
 
   agentInstance = createDeepAgent({
     name: "yijing-deep-agent",
