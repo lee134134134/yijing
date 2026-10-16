@@ -10,11 +10,13 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import pino from "pino";
 import { config } from "./config.js";
 
-// 确保日志目录存在
-const LOG_DIR = path.resolve(process.cwd(), "logs");
+// 将日志目录锚定到项目根目录，而不是 process.cwd()，避免不同启动路径导致日志位置漂移
+const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+const LOG_DIR = path.resolve(ROOT, "logs");
 function ensureLogDir() {
   if (!fs.existsSync(LOG_DIR)) {
     fs.mkdirSync(LOG_DIR, { recursive: true });
@@ -70,7 +72,17 @@ export const rootLogger = pino(
   {
     level: config.logLevel || "info",
     redact: {
-      paths: ["apiKey", "OPENAI_API_KEY", "req.headers.authorization"],
+      paths: [
+        "apiKey",
+        "OPENAI_API_KEY",
+        "EMBEDDING_API_KEY",
+        "api_key",
+        "req.headers.authorization",
+        "req.headers.Authorization",
+        "*.apiKey",
+        "*.secret",
+        "*.token",
+      ],
       censor: "[REDACTED]",
     },
   },

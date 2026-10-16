@@ -4,7 +4,10 @@ import { Document } from "@langchain/core/documents";
 import { RecursiveCharacterTextSplitter } from "@langchain/textsplitters";
 import { config } from "../config.js";
 import { ErrorCode, YijingError } from "../errors.js";
+import { createLogger } from "../logger.js";
 import type { KnowledgeDocument, KnowledgeMetadata } from "../types.js";
+
+const log = createLogger("ingestion:loader");
 
 /**
  * 根据文件名推断知识域
@@ -67,11 +70,11 @@ export function loadAllMarkdownFiles(): KnowledgeDocument[] {
     .filter((f) => f.endsWith(".md") && !EXCLUDE.has(f))
     .map((f) => path.join(knowledgeDir, f));
 
-  console.log(`找到 ${files.length} 个 Markdown 文件:`);
+  log.info(`找到 ${files.length} 个 Markdown 文件:`);
   for (const f of files) {
     const stats = fs.statSync(f);
     const sizeKB = (stats.size / 1024).toFixed(1);
-    console.log(`  - ${path.basename(f)} (${sizeKB} KB)`);
+    log.debug(`  - ${path.basename(f)} (${sizeKB} KB)`);
   }
 
   return files.map(readMarkdownFile);
@@ -160,7 +163,7 @@ export function extractSections(doc: Document<{ source: string; domain: string }
  * 2. 对过长的块再做 RecursiveCharacterTextSplit
  */
 export async function chunkDocuments(rawDocs: KnowledgeDocument[]): Promise<KnowledgeDocument[]> {
-  console.log("\n正在按标题结构拆分文档...");
+  log.info("\n正在按标题结构拆分文档...");
 
   // 第一步：按标题层级拆分为 sections
   const sections: KnowledgeDocument[] = [];
@@ -168,7 +171,7 @@ export async function chunkDocuments(rawDocs: KnowledgeDocument[]): Promise<Know
     const docSections = extractSections(doc as Document<{ source: string; domain: string }>);
     sections.push(...docSections);
   }
-  console.log(`  标题拆分后: ${sections.length} 个段落`);
+  log.info(`  标题拆分后: ${sections.length} 个段落`);
 
   // 第二步：对过大的段落使用 RecursiveCharacterTextSplit
   const textSplitter = new RecursiveCharacterTextSplitter({
@@ -195,7 +198,7 @@ export async function chunkDocuments(rawDocs: KnowledgeDocument[]): Promise<Know
       metadata,
     });
   });
-  console.log(`  最终分块: ${chunks.length} 个知识块`);
+  log.info(`  最终分块: ${chunks.length} 个知识块`);
 
   return chunks;
 }
@@ -210,15 +213,15 @@ export function printKnowledgeStats(docs: KnowledgeDocument[]): void {
     domains.set(domain, (domains.get(domain) || 0) + 1);
   }
 
-  console.log("\n知识库统计:");
-  console.log(`总知识块数: ${docs.length}`);
-  console.log("\n按领域分布:");
+  log.info("\n知识库统计:");
+  log.info(`总知识块数: ${docs.length}`);
+  log.info("\n按领域分布:");
   for (const [domain, count] of [...domains.entries()].sort((a, b) => b[1] - a[1])) {
     const pct = ((count / docs.length) * 100).toFixed(1);
-    console.log(`  ${domain}: ${count} 块 (${pct}%)`);
+    log.info(`  ${domain}: ${count} 块 (${pct}%)`);
   }
 
   const avgLen = docs.reduce((sum, d) => sum + d.pageContent.length, 0) / docs.length;
-  console.log(`\n平均块长度: ${Math.round(avgLen)} 字符`);
-  console.log(`总字符数: ${docs.reduce((sum, d) => sum + d.pageContent.length, 0).toLocaleString()}`);
+  log.info(`\n平均块长度: ${Math.round(avgLen)} 字符`);
+  log.info(`总字符数: ${docs.reduce((sum, d) => sum + d.pageContent.length, 0).toLocaleString()}`);
 }

@@ -1,6 +1,10 @@
 #!/usr/bin/env node
 
+import { spawn } from "node:child_process";
+import fs from "node:fs";
+import { dirname, join } from "node:path";
 import readline from "node:readline";
+import { fileURLToPath } from "node:url";
 import { agenticRag, deepAnalysis } from "./agents/index.js";
 import { config } from "./config.js";
 import { addMessage, clearHistory, getHistoryForContext, getRecentHistory } from "./conversation/index.js";
@@ -302,12 +306,40 @@ async function singleQuery(query: string) {
   }
 }
 
+/**
+ * 启动 vue-termui 终端 TUI（独立 Vite 打包产物）。
+ *
+ * TUI 是一个独立的 Vite/OpenTUI 应用，源码在 `tui/`，产物 `dist-tui/main.js`
+ * 需先执行 `npm run build:tui` 生成。这里以子进程方式拉起，保持与 CLI/API
+ * 进程隔离（OpenTUI 需要原生 FFI + 专属终端会话）。
+ */
+async function runTui(): Promise<void> {
+  const projectRoot = dirname(dirname(fileURLToPath(import.meta.url)));
+  const bundlePath = join(projectRoot, "dist-tui", "main.js");
+
+  if (!fs.existsSync(bundlePath)) {
+    console.error("未找到 TUI 产物，请先运行: npm run build:tui");
+    process.exit(1);
+  }
+
+  await new Promise<void>((resolve) => {
+    const child = spawn(process.execPath, ["--experimental-ffi", "--disable-warning=ExperimentalWarning", bundlePath], {
+      stdio: "inherit",
+      env: process.env,
+    });
+    child.on("exit", () => resolve());
+    child.on("error", (err) => {
+      console.error("启动 TUI 失败:", err.message);
+      resolve();
+    });
+  });
+}
+
 async function main() {
   const args = process.argv.slice(2);
 
   // ── TUI mode (via env var or implicit when piping) ────────────
-  if (args.length === 0 && process.env.TUI === "true" && process.stdout.isTTY) {
-    const { runTui } = await import("./tui/index.js");
+  if (args.length === 0 && config.tuiMode && process.stdout.isTTY) {
     await runTui();
     return;
   }

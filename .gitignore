@@ -2,6 +2,7 @@
 /.idea/
 /node_modules/
 /dist/
+/dist-tui/
 /.env
 /chroma_data/
 /data/
@@ -10,3 +11,4 @@
 /web/node_modules/
 /.claude/
 /.omo/run-continuation/
+.slim/deepwork/
