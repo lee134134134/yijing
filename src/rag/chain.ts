@@ -1,7 +1,8 @@
+import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import { StringOutputParser } from "@langchain/core/output_parsers";
 import { PromptTemplate } from "@langchain/core/prompts";
-import { ChatOpenAI } from "@langchain/openai";
-import { config } from "../config.js";
+import { createChatModel } from "../llm/factory.js";
+import type { LlmRole } from "../llm/types.js";
 import { createLogger } from "../logger.js";
 import type { QueryType } from "../types.js";
 
@@ -9,34 +10,26 @@ const log = createLogger("rag:chain");
 
 /** 统一 Chat 模型工厂 */
 export interface ChatModelOptions {
+  /** 角色路由:main/deep/classify/rewrite,默认 main */
+  role?: LlmRole;
   /** 覆盖模型名(如 /deep 的 deepModel) */
   model?: string;
   /** 覆盖温度 */
   temperature?: number;
   /** 透传底层模型参数(如 response_format、thinking 开关) */
   modelKwargs?: Record<string, unknown>;
+  /** 启用结构化 JSON 输出(deep 角色默认 true) */
+  structuredJson?: boolean;
 }
 
 /**
  * 获取 Chat 模型实例
  *
- * 所有 LLM 调用必须经此创建,保证三件事全局一致:
- * - 重试:maxRetries 接 config.llmMaxRetries(限流/5xx 走 SDK 内置指数退避,
- *   不再裸抛到业务层;此前该配置存在但从未接线)
- * - 温度/模型/baseURL/apiKey 统一走 config
- * - modelKwargs 仅在确有需要时透传(如 deep_analyst 的 json_object 模式)
+ * 历史入口保留,内部委托给 src/llm/factory.ts。所有 LLM 调用仍必须经此创建,
+ * 保证重试/超时/角色路由/网关差异只在一处生效。
  */
-export function getChatModel(options?: ChatModelOptions): ChatOpenAI {
-  return new ChatOpenAI({
-    model: options?.model ?? config.llmModel,
-    temperature: options?.temperature ?? config.llmTemperature,
-    maxRetries: config.llmMaxRetries,
-    modelKwargs: options?.modelKwargs,
-    configuration: {
-      baseURL: config.openaiBaseUrl,
-      apiKey: config.openaiApiKey,
-    },
-  });
+export function getChatModel(options?: ChatModelOptions): BaseChatModel {
+  return createChatModel(options);
 }
 
 /** 分类查询的 Prompt */
@@ -84,7 +77,7 @@ export function normalizeQueryType(raw: string): QueryType {
  * 分类查询类型
  */
 export async function classifyQuery(question: string): Promise<QueryType> {
-  const llm = getChatModel();
+  const llm = getChatModel({ role: "classify" });
   const chain = CLASSIFY_PROMPT.pipe(llm).pipe(new StringOutputParser());
   const result = await chain.invoke({ question });
   const queryType = normalizeQueryType(result);

@@ -88,7 +88,7 @@ export async function rewriteQuery(
   queryType?: string,
 ): Promise<RewriteResult> {
   try {
-    const llm = getChatModel();
+    const llm = getChatModel({ role: "rewrite" });
     const chain = REWRITE_PROMPT.pipe(llm).pipe(new StringOutputParser());
     const domainHint = (queryType && DOMAIN_HINT[queryType]) || "中医命理相关";
     const result = await chain.invoke({

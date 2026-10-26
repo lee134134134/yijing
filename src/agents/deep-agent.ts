@@ -50,28 +50,29 @@ export const DEEP_ANALYST_RESPONSE_SCHEMA = z.object({
   suggestions: z.array(z.string()).optional(),
 });
 
-/** deep_analyst 专用模型:json_object 输出模式(zen 网关支持)强制模型输出 JSON 文本,无须 tool_choice,因此禁用 thinking 模式(zen 网关 thinking 与 tool_choice 互斥) */
-const deepAnalystModel = getChatModel({
-  model: config.deepModel,
-  modelKwargs: { thinking: { type: "disabled" }, response_format: { type: "json_object" } },
-});
-
-/** deep_analyst subagent(D4): /deep 深度分析,json_object 模式输出 JSON 文本,由 deepDeepAnalysis 手动解析 */
-const deepAnalyst: SubAgent = {
-  name: "deep_analyst",
-  description: "对复杂的中医/命理/养生问题进行深度多角度分析,输出结构化 JSON 结论。当用户请求深度分析时使用。",
-  systemPrompt: DEEP_ANALYST_PROMPT,
-  tools: [...allTools],
-  model: deepAnalystModel,
-  middleware: [todoListMiddleware()],
-};
+/**
+ * deep_analyst subagent(D4): /deep 深度分析
+ *
+ * 延迟到构建 agent 时才创建模型:配置非法时应由 config-validation 给出可读错误,
+ * 而不是在模块 import 阶段直接抛栈。网关差异由 provider capabilities 驱动。
+ */
+function buildDeepAnalystSubAgent(): SubAgent {
+  return {
+    name: "deep_analyst",
+    description: "对复杂的中医/命理/养生问题进行深度多角度分析,输出结构化 JSON 结论。当用户请求深度分析时使用。",
+    systemPrompt: DEEP_ANALYST_PROMPT,
+    tools: [...allTools],
+    model: getChatModel({ role: "deep", structuredJson: true }),
+    middleware: config.enableTodoPlanning ? [todoListMiddleware()] : [],
+  };
+}
 
 let agentInstance: DeepAgent | null = null;
 
 /**
  * 构建 DeepAgent(单例)
  *
- * - model: ChatOpenAI 实例(自定义 baseURL/apiKey,复用现有配置)
+ * - model: 按 main 角色解析的 ChatModel(provider/baseURL/key 见 src/llm/)
  * - middleware: todoListMiddleware(D3 任务规划)
  * - subagents: deep_analyst(D4)
  * - 文件系统工具经 harness profile 隐藏(D1),且默认 StateBackend 为内存态,
@@ -82,7 +83,7 @@ export function buildDeepAgent(): DeepAgent {
 
   registerD1Profile();
 
-  const model = getChatModel();
+  const model = getChatModel({ role: "main" });
 
   agentInstance = createDeepAgent({
     name: "yijing-deep-agent",
@@ -90,7 +91,7 @@ export function buildDeepAgent(): DeepAgent {
     systemPrompt: DEEP_SYSTEM_PROMPT,
     tools: [...allTools],
     middleware: config.enableTodoPlanning ? [todoListMiddleware()] : [],
-    subagents: [deepAnalyst],
+    subagents: [buildDeepAnalystSubAgent()],
   });
 
   return agentInstance;
@@ -102,7 +103,7 @@ let analystInstance: ReactAgent | null = null;
  * 构建独立 deep_analyst agent(单例)
  *
  * /deep 深度分析不经过主 agent 的任务分配,而是直接调用编译后的
- * deep_analyst ReactAgent。其模型使用 json_object 输出模式,最终消息为
+ * deep_analyst ReactAgent。其模型使用 deep 角色的 JSON 输出策略,最终消息为
  * JSON 文本,由 deepDeepAnalysis 手动解析为 DEEP_ANALYST_RESPONSE_SCHEMA。
  */
 export function buildDeepAnalystAgent(): ReactAgent {
@@ -110,14 +111,7 @@ export function buildDeepAnalystAgent(): ReactAgent {
 
   registerD1Profile();
 
-  analystInstance = createSubAgent({
-    name: "deep_analyst",
-    description: "对复杂的中医/命理/养生问题进行深度多角度分析,输出结构化 JSON 结论。当用户请求深度分析时使用。",
-    systemPrompt: DEEP_ANALYST_PROMPT,
-    tools: [...allTools],
-    middleware: config.enableTodoPlanning ? [todoListMiddleware()] : [],
-    model: deepAnalystModel,
-  });
+  analystInstance = createSubAgent(buildDeepAnalystSubAgent());
 
   return analystInstance;
 }
