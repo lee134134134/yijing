@@ -90,6 +90,18 @@ export interface DeepAnalysisResponse {
   elapsed: number;
 }
 
+export interface LlmStatusEntry {
+  /** 角色:main/deep/classify/rewrite */
+  role: string;
+  provider: string;
+  model: string;
+  baseUrl: string;
+  /** 是否启用 response_format=json_object */
+  jsonMode: boolean;
+  /** 配置问题(如缺少 key) */
+  error?: string;
+}
+
 export interface StatusResponse {
   docCount: number;
   model: string;
@@ -101,6 +113,8 @@ export interface StatusResponse {
   maxContextTokens: number;
   chunkSize: number;
   chunkOverlap: number;
+  /** 各角色的第三方模型路由(不含密钥) */
+  llm?: LlmStatusEntry[];
 }
 
 export interface ErrorResponse {

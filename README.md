@@ -61,6 +61,67 @@ npx tsx src/index.ts "桂枝汤的组成和适应症是什么？"
 > 切换 `EMBEDDING_PROVIDER`（local ↔ api）或更换 `EMBEDDING_MODEL` 会改变向量语义/维度，必须重新执行 `npm run ingest`。
 > 中文知识库建议：`Xenova/bge-small-zh-v1.5`（512 维，中文语义区分度显著优于默认英文模型）。
 
+## 第三方大模型接入
+
+LLM 接入层位于 `src/llm/`，把「provider 预设 + 角色路由 + 网关能力差异」从业务代码中抽离。旧配置（`OPENAI_BASE_URL` + `OPENAI_API_KEY` + `LLM_MODEL`）保持零迁移兼容。
+
+### Provider 预设
+
+| id | base URL | 专属 Key 环境变量 |
+|----|----------|-------------------|
+| `openai` | `https://api.openai.com/v1` | `OPENAI_API_KEY` |
+| `openrouter` | `https://openrouter.ai/api/v1` | `OPENROUTER_API_KEY` |
+| `deepseek` | `https://api.deepseek.com/v1` | `DEEPSEEK_API_KEY` |
+| `moonshot` | `https://api.moonshot.cn/v1` | `MOONSHOT_API_KEY` |
+| `qwen` | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `DASHSCOPE_API_KEY` |
+| `zhipu` | `https://open.bigmodel.cn/api/paas/v4` | `ZHIPU_API_KEY` |
+| `siliconflow` | `https://api.siliconflow.cn/v1` | `SILICONFLOW_API_KEY` |
+| `groq` | `https://api.groq.com/openai/v1` | `GROQ_API_KEY` |
+| `ollama` | `http://127.0.0.1:11434/v1` | 无（本地） |
+| `lmstudio` | `http://127.0.0.1:1234/v1` | 无（本地） |
+| `opencode` | `https://opencode.ai/zen/v1` | `OPENCODE_API_KEY` |
+| `custom` | 由 `LLM_BASE_URL` 指定 | `LLM_API_KEY` / `LLM_PROVIDER_KEYS` |
+
+### 角色路由
+
+四个角色可分别指向不同 provider / model / key：
+
+| 角色 | 用途 | 角色级变量前缀 |
+|------|------|----------------|
+| `main` | 主 Agent、普通问答 | `LLM_MAIN_*` |
+| `deep` | `/deep` 深度分析 | `LLM_DEEP_*`（兼容 `DEEP_MODEL`） |
+| `classify` | 查询分类 | `LLM_CLASSIFY_*` |
+| `rewrite` | 查询重写 | `LLM_REWRITE_*` |
+
+示例——主模型走 OpenRouter，深度分析走 DeepSeek：
+
+```ini
+LLM_PROVIDER=openrouter
+LLM_MODEL=openai/gpt-4o-mini
+OPENROUTER_API_KEY=sk-or-...
+
+LLM_DEEP_PROVIDER=deepseek
+LLM_DEEP_MODEL=deepseek-chat
+DEEPSEEK_API_KEY=sk-ds...
+```
+
+解析优先级：`LLM_<ROLE>_*` → `LLM_PROVIDER` / `LLM_MODEL` / `LLM_API_KEY` / `LLM_BASE_URL` → 旧 `OPENAI_*` / `LLM_MODEL` → provider 预设默认值。
+
+### 能力差异（JSON / thinking）
+
+网关差异不再靠 `baseUrl.includes(...)` 猜：
+
+- `jsonMode`：是否支持 `response_format=json_object`
+- `jsonModeConflictsWithTools`：JSON 模式与工具调用互斥时，`deep` 角色自动退回提示词约束（OpenRouter / DeepSeek）
+- `disableThinkingForJson`：JSON 模式必须显式关闭 thinking（OpenCode Zen）
+- `LLM_DEEP_JSON_MODE=auto|on|off` 可人工覆盖
+
+### 新增网关
+
+- **OpenAI 兼容网关**：设置 `LLM_PROVIDER=custom` + `LLM_BASE_URL` + `LLM_MODEL` + `LLM_API_KEY`，无需改代码。
+- **需要持久化多个网关**：用 `LLM_PROVIDERS_FILE` 外挂 JSON（见 `docs/llm-providers.md`）。
+- **非 OpenAI 原生协议**（Anthropic / Gemini SDK）：实现 `ChatModelAdapter` 并用 `registerChatModelAdapter(protocol, adapter)` 注册，业务层不变。
+
 ## API 文档
 
 启动服务后访问 `http://localhost:3001/docs` 查看 Swagger UI 文档。
@@ -97,6 +158,7 @@ src/
   types.ts               共享类型定义
   errors.ts              错误分类体系（ErrorCode 枚举 + YijingError 层级）
   logger.ts              pino 结构化日志（含敏感数据脱敏）
+  llm/                   第三方大模型接入（provider 预设 + 角色路由 + adapter）
   utils/
     retry.ts             重试工具（指数退避 + 超时控制）
   ingestion/             知识库导入（Markdown 加载、分块、领域推断）

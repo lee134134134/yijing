@@ -6,9 +6,22 @@
 
 import { config } from "./config.js";
 import { ErrorCode, YijingError } from "./errors.js";
+import { resolveModelConfig } from "./llm/factory.js";
+import { getProviderLoadErrors } from "./llm/providers.js";
+import { LLM_ROLES } from "./llm/types.js";
 import { createLogger } from "./logger.js";
 
 const log = createLogger("config:validation");
+
+/** 本机/内网模型服务通常不校验 API Key */
+function isLocalBaseUrl(baseUrl: string): boolean {
+  try {
+    const host = new URL(baseUrl).hostname;
+    return host === "localhost" || host === "127.0.0.1" || host === "::1";
+  } catch {
+    return false;
+  }
+}
 
 /** 验证结果 */
 export interface ValidationResult {
@@ -26,16 +39,48 @@ export function validateConfig(): ValidationResult {
   const warnings: string[] = [];
 
   // ── LLM 配置验证 ──
-  if (!config.openaiApiKey) {
-    errors.push("OPENAI_API_KEY is required but not configured");
-  }
-
-  if (!config.openaiBaseUrl || config.openaiBaseUrl === "https://api.openai.com/v1") {
-    warnings.push("Using default OpenAI base URL - consider setting OPENAI_BASE_URL");
-  }
-
   if (!config.llmModel) {
     errors.push("LLM_MODEL is required");
+  }
+
+  for (const issue of config.llmConfigIssues ?? []) {
+    errors.push(issue);
+  }
+  for (const issue of getProviderLoadErrors(config)) {
+    errors.push(issue);
+  }
+
+  // 按角色校验:每个角色最终解析出的 provider/baseURL/key 都必须可用
+  for (const role of LLM_ROLES) {
+    try {
+      const resolved = resolveModelConfig(role, config);
+      if (!/^https?:\/\//i.test(resolved.baseUrl)) {
+        errors.push(`LLM role "${role}" base URL must start with http:// or https:// (got "${resolved.baseUrl}")`);
+      }
+      const hasAuthHeader = Object.keys(resolved.headers).some((name) =>
+        /^(authorization|api[-_]?key|x-api-key)$/i.test(name),
+      );
+      if (!resolved.apiKey && !hasAuthHeader && !isLocalBaseUrl(resolved.baseUrl)) {
+        errors.push(
+          `LLM role "${role}" (provider "${resolved.providerId}") has no API key. ` +
+            `Set LLM_<ROLE>_API_KEY, ${resolved.providerId.toUpperCase()}_API_KEY, or LLM_PROVIDER_KEYS.`,
+        );
+      }
+      if (!Number.isFinite(resolved.temperature) || resolved.temperature < 0 || resolved.temperature > 2) {
+        errors.push(`LLM role "${role}" temperature must be between 0 and 2`);
+      }
+      if (!Number.isInteger(resolved.maxRetries) || resolved.maxRetries < 0 || resolved.maxRetries > 10) {
+        errors.push(`LLM role "${role}" maxRetries must be an integer between 0 and 10`);
+      }
+      if (!Number.isFinite(resolved.timeoutMs) || resolved.timeoutMs < 0) {
+        errors.push(`LLM role "${role}" timeout must be >= 0`);
+      }
+      if (resolved.maxTokens !== undefined && (!Number.isInteger(resolved.maxTokens) || resolved.maxTokens <= 0)) {
+        errors.push(`LLM role "${role}" maxTokens must be a positive integer`);
+      }
+    } catch (err) {
+      errors.push(`LLM role "${role}": ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 
   // ── ChromaDB 配置验证 ──
