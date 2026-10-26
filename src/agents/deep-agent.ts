@@ -24,21 +24,30 @@ const FILESYSTEM_TOOL_NAMES = ["ls", "read_file", "write_file", "edit_file", "gl
  * 回退到 `${model}`、`${provider}`。因此为当前模型名注册即可生效。
  */
 function registerD1Profile() {
-  for (const modelName of new Set([config.llmModel, config.deepModel])) {
+  // config 在测试中被 mock 时 llmRoles/deepModel 可能缺省,仅对合法字符串模型名注册
+  const modelNames = [config.llmModel, config.llmRoles?.deep?.model, config.deepModel].filter(
+    (name): name is string => typeof name === "string" && name.length > 0,
+  );
+  for (const modelName of new Set(modelNames)) {
     registerHarnessProfile(modelName, {
       excludedTools: FILESYSTEM_TOOL_NAMES,
     });
-    // 同时注册 provider:model 形式,确保模型名为纯自定义值时也能命中
-    registerHarnessProfile(`openai:${modelName}`, {
-      excludedTools: FILESYSTEM_TOOL_NAMES,
-    });
+    // 同时注册 provider:model 形式,确保模型名为纯自定义值时也能命中。
+    // 模型名自带 ":" 时(如 OpenRouter 的 ":free" 后缀)必须跳过:profile key 只允许
+    // 一个 ":",且 resolveHarnessProfile 对含 ":" 的模型名会按完整串精确命中上面的注册。
+    if (!modelName.includes(":")) {
+      registerHarnessProfile(`openai:${modelName}`, {
+        excludedTools: FILESYSTEM_TOOL_NAMES,
+      });
+    }
   }
 }
 
 /** deep_analyst 结构化输出 schema(对应 types.AnalysisResult) */
 export const DEEP_ANALYST_RESPONSE_SCHEMA = z.object({
   conclusion: z.string().min(1),
-  reasoning: z.string(),
+  // 不同模型对"分步骤"的输出形态不同(字符串 / 字符串数组),统一归一为字符串
+  reasoning: z.union([z.string(), z.array(z.string())]).transform((v) => (Array.isArray(v) ? v.join("\n") : v)),
   references: z.array(
     z.object({
       source: z.string().min(1),
