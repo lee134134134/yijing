@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import path from "node:path";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const tmpDir = vi.hoisted(() => {
@@ -9,7 +10,7 @@ const tmpDir = vi.hoisted(() => {
 vi.mock("../config.js", () => ({
   config: {
     maxHistory: 10,
-    dataDir: tmpDir,
+    sqlitePath: path.join(tmpDir, "test.db"),
   },
 }));
 
@@ -21,10 +22,7 @@ afterAll(() => {
 
 describe("conversation store", () => {
   beforeEach(() => {
-    const convFile = `${tmpDir}/conversations.json`;
-    if (fs.existsSync(convFile)) {
-      fs.unlinkSync(convFile);
-    }
+    clearHistory();
   });
 
   it("adds a message and retrieves it", () => {
@@ -42,7 +40,7 @@ describe("conversation store", () => {
   it("assigns id and timestamp automatically", () => {
     addMessage({ role: "user", content: "test" });
     const history = getRecentHistory();
-    expect(history[0].id).toMatch(/^conv_\d+_\d+$/);
+    expect(history[0].id).toMatch(/^conv_\d+_\d+_[a-z0-9]+$/);
     expect(history[0].timestamp).toBeGreaterThan(0);
   });
 
@@ -58,7 +56,7 @@ describe("conversation store", () => {
     }
 
     const history = getRecentHistory();
-    expect(history.length).toBeLessThanOrEqual(11);
+    expect(history.length).toBeLessThanOrEqual(10);
   });
 
   it("getRecentHistory respects limit parameter", () => {
@@ -71,17 +69,29 @@ describe("conversation store", () => {
     expect(limited[0].content).toBe("msg 15");
   });
 
-  it("getHistoryForContext returns recent turns", () => {
+  it("getHistoryForContext returns recent turns as JSON messages", () => {
     addMessage({ role: "user", content: "Q1" });
     addMessage({ role: "assistant", content: "A1" });
     addMessage({ role: "user", content: "Q2" });
     addMessage({ role: "assistant", content: "A2" });
 
     const context = getHistoryForContext(2);
-    expect(context).toContain("问: Q1");
-    expect(context).toContain("答: A1");
-    expect(context).toContain("问: Q2");
-    expect(context).toContain("答: A2");
+
+    expect(context).toBeDefined();
+    expect(JSON.parse(context ?? "[]")).toEqual([
+      { role: "user", content: "Q1" },
+      { role: "assistant", content: "A1" },
+      { role: "user", content: "Q2" },
+      { role: "assistant", content: "A2" },
+    ]);
+  });
+
+  it("消息内容含换行与 问:/答: 前缀行时无解析歧义(JSON 格式核心价值)", () => {
+    addMessage({ role: "assistant", content: "歌诀:\n问: 何为桂枝汤?\n答: 解表之剂" });
+
+    const parsed = JSON.parse(getHistoryForContext(1) ?? "[]");
+
+    expect(parsed).toEqual([{ role: "assistant", content: "歌诀:\n问: 何为桂枝汤?\n答: 解表之剂" }]);
   });
 
   it("getHistoryForContext returns undefined for empty history", () => {

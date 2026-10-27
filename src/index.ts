@@ -1,6 +1,10 @@
 #!/usr/bin/env node
 
+import { spawn } from "node:child_process";
+import fs from "node:fs";
+import { dirname, join } from "node:path";
 import readline from "node:readline";
+import { fileURLToPath } from "node:url";
 import { agenticRag, deepAnalysis } from "./agents/index.js";
 import { config } from "./config.js";
 import { addMessage, clearHistory, getHistoryForContext, getRecentHistory } from "./conversation/index.js";
@@ -262,6 +266,34 @@ async function interactiveLoop() {
 
 async function singleQuery(query: string) {
   try {
+    // 单次查询同样支持 /deep 命令(与交互模式一致)
+    if (query.trim().startsWith("/deep")) {
+      const deepQuery = query.trim().replace(/^\/deep\s*/, "");
+      if (!deepQuery) {
+        console.log("用法: /deep <问题>");
+        return;
+      }
+      addMessage({ role: "user", content: `[深度] ${deepQuery}` });
+      const result = await deepAnalysis(deepQuery);
+      console.log(`${color(`[深度分析] 参考 ${result.references.length} 篇`, GREEN)}`);
+      console.log("-".repeat(50));
+      console.log(color("结论:", BOLD));
+      console.log(result.conclusion);
+      if (result.reasoning) {
+        console.log(`\n${color("推理过程:", BOLD)}`);
+        console.log(result.reasoning);
+      }
+      if (result.references.length > 0) {
+        console.log(`\n${color("参考来源:", GRAY)}`);
+        for (const r of result.references) {
+          console.log(`  ${color(r.source, CYAN)} [${r.domain}]`);
+        }
+      }
+      console.log("-".repeat(50));
+      addMessage({ role: "assistant", content: result.conclusion, queryType: "deep_analysis" });
+      return;
+    }
+
     addMessage({ role: "user", content: query });
     const result = await agenticRag(query);
     const label = QUERY_TYPES_LABEL[result.queryType] || "知识问答";
@@ -274,12 +306,40 @@ async function singleQuery(query: string) {
   }
 }
 
+/**
+ * 启动 vue-termui 终端 TUI（独立 Vite 打包产物）。
+ *
+ * TUI 是一个独立的 Vite/OpenTUI 应用，源码在 `tui/`，产物 `dist-tui/main.js`
+ * 需先执行 `npm run build:tui` 生成。这里以子进程方式拉起，保持与 CLI/API
+ * 进程隔离（OpenTUI 需要原生 FFI + 专属终端会话）。
+ */
+async function runTui(): Promise<void> {
+  const projectRoot = dirname(dirname(fileURLToPath(import.meta.url)));
+  const bundlePath = join(projectRoot, "dist-tui", "main.js");
+
+  if (!fs.existsSync(bundlePath)) {
+    console.error("未找到 TUI 产物，请先运行: npm run build:tui");
+    process.exit(1);
+  }
+
+  await new Promise<void>((resolve) => {
+    const child = spawn(process.execPath, ["--experimental-ffi", "--disable-warning=ExperimentalWarning", bundlePath], {
+      stdio: "inherit",
+      env: process.env,
+    });
+    child.on("exit", () => resolve());
+    child.on("error", (err) => {
+      console.error("启动 TUI 失败:", err.message);
+      resolve();
+    });
+  });
+}
+
 async function main() {
   const args = process.argv.slice(2);
 
   // ── TUI mode (via env var or implicit when piping) ────────────
-  if (args.length === 0 && process.env.TUI === "true" && process.stdout.isTTY) {
-    const { runTui } = await import("./tui/index.js");
+  if (args.length === 0 && config.tuiMode && process.stdout.isTTY) {
     await runTui();
     return;
   }

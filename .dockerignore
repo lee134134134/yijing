@@ -1,0 +1,60 @@
+# Build artifacts
+/dist
+/dist-tui
+
+# Runtime data (contains conversations, keys, secrets)
+/data
+/chroma_data
+/logs
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# IDE
+.idea/
+.vscode/
+.claude/
+.omo/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Dependencies
+node_modules/
+
+# GitNexus
+.gitnexus/
+
+# SSH keys and sensitive files
+lee
+lee.pub
+id_rsa
+id_rsa.pub
+*.pem
+*.key
+*.secret
+
+# Deepwork state
+.slim/deepwork/
+
+# Test coverage
+coverage/
+
+# Temporary
+tmp/
+*.tmp
+
+# Source maps
+*.map
+
+# PDF sources
+/pdf
+
+# Legacy
+/web/
+
+# Docker
+.dockerignore

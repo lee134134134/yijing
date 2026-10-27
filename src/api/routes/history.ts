@@ -4,7 +4,8 @@
  */
 
 import type { FastifyInstance } from "fastify";
-import { getRecentHistory, clearHistory } from "../../conversation/index.js";
+import { clearHistory, getRecentHistory } from "../../conversation/index.js";
+import { ErrorCode, YijingError } from "../../errors.js";
 import { createLogger, createRequestContext, logRequestComplete } from "../../logger.js";
 
 const log = createLogger("api:routes:history");
@@ -17,14 +18,19 @@ export async function historyRoutes(server: FastifyInstance) {
     const rc = createRequestContext("GET", "/api/history");
 
     try {
-      const limit = parseInt(req.query?.limit || "50", 10);
-      const history = getRecentHistory(Math.max(1, Math.min(200, limit)));
+      const raw = req.query?.limit;
+      const n = raw ? Number.parseInt(raw, 10) : 50;
+      const limit = Number.isNaN(n) || n < 1 ? 50 : Math.min(200, n);
+      const history = getRecentHistory(limit);
 
       logRequestComplete(rc, 200, { count: history.length });
       return reply.send({ history, total: history.length });
     } catch (err) {
       log.error({ err, requestId: rc.requestId }, "Failed to fetch history");
-      return reply.status(500).send({ error: { code: "INTERNAL_ERROR", message: "Failed to fetch history" } });
+      if (err instanceof YijingError) {
+        return reply.status(err.statusCode).send(err.toJSON());
+      }
+      return reply.status(500).send(new YijingError(ErrorCode.INTERNAL, "Failed to fetch history").toJSON());
     }
   });
 
@@ -40,7 +46,10 @@ export async function historyRoutes(server: FastifyInstance) {
       return reply.send({ success: true });
     } catch (err) {
       log.error({ err, requestId: rc.requestId }, "Failed to clear history");
-      return reply.status(500).send({ error: { code: "INTERNAL_ERROR", message: "Failed to clear history" } });
+      if (err instanceof YijingError) {
+        return reply.status(err.statusCode).send(err.toJSON());
+      }
+      return reply.status(500).send(new YijingError(ErrorCode.INTERNAL, "Failed to clear history").toJSON());
     }
   });
 }

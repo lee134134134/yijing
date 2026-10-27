@@ -4,6 +4,7 @@
 
 import type { FastifyInstance } from "fastify";
 import { deepAnalysis } from "../../agents/index.js";
+import { ErrorCode, ValidationError, YijingError } from "../../errors.js";
 import { createLogger, createRequestContext, logRequestComplete } from "../../logger.js";
 import type { DeepAnalysisResponse } from "../../types.js";
 
@@ -16,7 +17,8 @@ export async function deepRoutes(server: FastifyInstance) {
     const { query } = req.body || {};
 
     if (!query || typeof query !== "string" || query.trim().length === 0) {
-      return reply.status(400).send({ error: { code: "INVALID_INPUT", message: "query is required" } });
+      const ve = new ValidationError("query is required");
+      return reply.status(ve.statusCode).send(ve.toJSON());
     }
 
     try {
@@ -36,9 +38,11 @@ export async function deepRoutes(server: FastifyInstance) {
       logRequestComplete(rc, 200, { confidence: result.confidence, refCount: result.references.length, elapsed });
       return reply.send(response);
     } catch (err) {
-      const errMsg = err instanceof Error ? err.message : "Internal error";
       log.error({ err, requestId: rc.requestId }, "Deep analysis failed");
-      return reply.status(500).send({ error: { code: "INTERNAL_ERROR", message: errMsg } });
+      if (err instanceof YijingError) {
+        return reply.status(err.statusCode).send(err.toJSON());
+      }
+      return reply.status(500).send(new YijingError(ErrorCode.INTERNAL, "Deep analysis failed").toJSON());
     }
   });
 }
