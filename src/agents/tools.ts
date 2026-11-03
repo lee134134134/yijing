@@ -32,6 +32,7 @@ export const KNOWLEDGE_DOMAINS = [
   "医案",
   "阴实理论",
   "文集",
+  "综合",
 ] as const;
 
 /** 工具输出截断上限(每文档,与旧 DynamicTool 行为一致) */

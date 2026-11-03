@@ -13,7 +13,6 @@ import { Document } from "@langchain/core/documents";
 import YAML from "yaml";
 import { createLogger } from "../logger.js";
 import type { KnowledgeDocument, KnowledgeMetadata } from "../types.js";
-import { inferDomain } from "./loader.js";
 
 const log = createLogger("ingestion:corpus");
 
@@ -73,6 +72,27 @@ function toNumber(value: unknown): number | undefined {
   return undefined;
 }
 
+/** 书名 → 领域(与 KNOWLEDGE_DOMAINS 对齐,便于 search_by_domain 命中全文) */
+export function inferCorpusDomain(book: string): string {
+  if (book.includes("伤寒")) return "伤寒论";
+  if (book.includes("金匮")) return "金匮要略";
+  if (book.includes("黄帝内经")) return "黄帝内经";
+  if (book.includes("神农本草") || book.includes("药性")) return "神农本草经";
+  if (book.includes("针灸")) return "针灸";
+  if (book.includes("天纪") || book.includes("天机") || book.includes("人间道") || book.includes("地脉道")) {
+    return "天纪";
+  }
+  if (book.includes("紫微")) return "紫微斗数";
+  if (book.includes("医案")) return "医案";
+  if (book.includes("方剂") || book.includes("汉唐")) return "方剂";
+  if (book.includes("文集")) return "文集";
+  if (book.includes("八字") || book.includes("滴天髓") || book.includes("子平")) return "命理八字";
+  if (book.includes("相")) return "面相学";
+  if (book.includes("养生") || book.includes("金刚功")) return "养生功法";
+  if (book.includes("阴实")) return "阴实理论";
+  return "综合";
+}
+
 /**
  * 加载全文语料
  *
@@ -97,7 +117,7 @@ export function loadCorpusFiles(corpusDir: string): KnowledgeDocument[] {
     const chapter = data.chapter?.trim() || data.section?.trim() || undefined;
     const metadata: KnowledgeMetadata = {
       source: relative,
-      domain: book || inferDomain(file),
+      domain: inferCorpusDomain(book),
       h1: book,
       h2: chapter,
       book,

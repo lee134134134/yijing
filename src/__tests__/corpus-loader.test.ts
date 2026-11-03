@@ -18,7 +18,7 @@ vi.mock("../logger.js", () => ({
   createLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }),
 }));
 
-import { loadCorpusFiles, parseFrontMatter } from "../ingestion/corpus-loader.js";
+import { inferCorpusDomain, loadCorpusFiles, parseFrontMatter } from "../ingestion/corpus-loader.js";
 
 beforeAll(() => {
   fs.mkdirSync(path.join(h.dir, "book-a"), { recursive: true });
@@ -73,6 +73,15 @@ describe("parseFrontMatter", () => {
   });
 });
 
+describe("inferCorpusDomain", () => {
+  it("书名映射到检索领域", () => {
+    expect(inferCorpusDomain("倪海厦人纪系列之伤寒论")).toBe("伤寒论");
+    expect(inferCorpusDomain("倪海厦天纪系列之天机道")).toBe("天纪");
+    expect(inferCorpusDomain("滴天髓阐微")).toBe("命理八字");
+    expect(inferCorpusDomain("某未知书")).toBe("综合");
+  });
+});
+
 describe("loadCorpusFiles", () => {
   it("加载带 front-matter 的章节并映射元数据", () => {
     const docs = loadCorpusFiles(h.dir);
@@ -87,6 +96,7 @@ describe("loadCorpusFiles", () => {
       layer: "fulltext",
       h1: "伤寒论",
       h2: "辨太阳病",
+      domain: "伤寒论",
     });
     expect(first?.pageContent).toContain("太阳之为病");
   });
@@ -95,6 +105,7 @@ describe("loadCorpusFiles", () => {
     const docs = loadCorpusFiles(h.dir);
     const second = docs.find((doc) => doc.metadata.source === "book-a/002.md");
     expect(second?.metadata.book).toBe("book-a");
+    expect(second?.metadata.domain).toBe("综合");
     expect(second?.metadata.layer).toBe("fulltext");
   });
 
