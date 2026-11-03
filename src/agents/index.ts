@@ -3,15 +3,18 @@
  *
  * DeepAgent.js 编排(主 agent + deep_analyst subagent)。
  *
- * 对外 API(agenticRag / deepAnalysis)签名与迁移前保持一致,
- * 响应结构兼容(引用 [ref-N] 脚注由 deep 系统提示词保证)。
+ * 对外 API(agenticRag / deepAnalysis)保持稳定;新增结构化 citations[]。
+ * 引用规则:工具输出 [ref:<id>],回答中的 id 必须命中本次检索集合,
+ * 未命中的 id 会记录在 invalidRefIds 中(用于审计,不阻断回答)。
  */
 
 import { config } from "../config.js";
 import { VectorStoreError } from "../errors.js";
 import { createLogger } from "../logger.js";
 import { classifyQuery } from "../rag/chain.js";
-import type { AnalysisResult, QueryType } from "../types.js";
+import { mergeCitations, parseCitedRefIds, parseToolCitations, validateCitations } from "../rag/citation.js";
+import { collectWithCitations } from "../rag/citation-collector.js";
+import type { AnalysisResult, Citation, QueryResult, QueryType } from "../types.js";
 import { assertStoreReady } from "../vectorstore/chroma.js";
 import { buildDeepAgent, buildDeepAnalystAgent, DEEP_ANALYST_RESPONSE_SCHEMA } from "./deep-agent.js";
 
@@ -32,15 +35,8 @@ async function safeClassifyQuery(question: string): Promise<QueryType> {
   }
 }
 
-/** 检索工具名(用于 docCount 统计) */
+/** 检索工具名(用于统计检索调用与失败) */
 const RETRIEVAL_TOOL_NAMES = new Set(["search_knowledge_base", "search_by_domain"]);
-
-/** 统计工具输出中的来源文档数(每个 【来源】 锚点计 1) */
-function countSourceDocs(output: unknown): number {
-  const text = typeof output === "string" ? output : JSON.stringify(output ?? "");
-  const matches = text.match(/【来源】/g);
-  return matches?.length ?? 0;
-}
 
 /** 对话历史中的一条消息 */
 type ChatMessage = { role: "user" | "assistant"; content: string };
@@ -88,22 +84,30 @@ function extractFinalText(state: { messages?: Array<{ content?: unknown }> }, st
   return streamed;
 }
 
+interface AgentRunOutcome {
+  text: string;
+  streamedText: string;
+  retrievalCalls: number;
+  /** 从工具输出文本兜底解析出的引用(不依赖 AsyncLocalStorage) */
+  toolCitations: Citation[];
+}
+
 /**
  * deep 模式 agenticRag 实现
  *
  * 经 streamEvents v3 统一处理流式/非流式:
  * - run.messages: 逐段输出最终回答文本(调 onToken)
- * - run.toolCalls: 统计检索工具调用,近似 docCount
+ * - run.toolCalls: 统计检索调用/失败;引用由工具写入 CitationCollector
  * - run.output: 最终状态,取完整回答文本
  *
  * 查询分类与 agent 运行并行发起:分类只贡献 meta 标签,
- * 不应阻塞首 token(此前为串行等待一次完整 LLM 往返,每请求 +1~3s)。
+ * 不应阻塞首 token。
  */
 async function deepAgenticRag(
   input: string,
   chatHistory?: string,
   onToken?: (chunk: string) => void,
-): Promise<{ response: string; queryType: QueryType; docCount: number }> {
+): Promise<QueryResult> {
   // 先确认真实知识库可用,再花 LLM 的钱;不可用时直接 503,而不是让模型自由发挥
   await assertStoreReady();
 
@@ -111,59 +115,130 @@ async function deepAgenticRag(
   const classifyPromise = safeClassifyQuery(input);
 
   const messages = [...parseChatHistory(chatHistory), { role: "user" as const, content: input }];
-
   const agent = buildDeepAgent();
-  const run = await agent.streamEvents({ messages }, { version: "v3", recursionLimit: config.deepAgentMaxIterations });
 
-  let streamedText = "";
-  let docCount = 0;
-  let retrievalCalls = 0;
-  let retrievalFailures = 0;
+  const { result, citations } = await collectWithCitations<AgentRunOutcome>(async () => {
+    const run = await agent.streamEvents(
+      { messages },
+      { version: "v3", recursionLimit: config.deepAgentMaxIterations },
+    );
 
-  await Promise.all([
-    (async () => {
-      for await (const msg of run.messages) {
-        for await (const token of msg.text) {
-          streamedText += token;
-          onToken?.(token);
+    let streamedText = "";
+    let retrievalCalls = 0;
+    let retrievalFailures = 0;
+    const toolCitations: Citation[] = [];
+
+    await Promise.all([
+      (async () => {
+        for await (const msg of run.messages) {
+          for await (const token of msg.text) {
+            streamedText += token;
+            onToken?.(token);
+          }
         }
-      }
-    })(),
-    (async () => {
-      for await (const call of run.toolCalls) {
-        if (!RETRIEVAL_TOOL_NAMES.has(call.name)) continue;
-        try {
-          const output = await call.output;
-          retrievalCalls += 1;
-          docCount += countSourceDocs(output);
-        } catch (err) {
-          // 工具失败不能伪装成"没搜到":计数后由下方统一判定
-          retrievalFailures += 1;
-          log.error({ err, tool: call.name }, "Retrieval tool failed");
+      })(),
+      (async () => {
+        for await (const call of run.toolCalls) {
+          if (!RETRIEVAL_TOOL_NAMES.has(call.name)) continue;
+          try {
+            const output = await call.output;
+            retrievalCalls += 1;
+            // 兜底:即使 AsyncLocalStorage 上下文丢失,也能从工具文本恢复引用
+            const text = typeof output === "string" ? output : JSON.stringify(output ?? "");
+            toolCitations.push(...parseToolCitations(text));
+          } catch (err) {
+            // 工具失败不能伪装成"没搜到":计数后由下方统一判定
+            retrievalFailures += 1;
+            log.error({ err, tool: call.name }, "Retrieval tool failed");
+          }
         }
-      }
-    })(),
-  ]);
+      })(),
+    ]);
 
-  const state = await run.output;
+    const state = await run.output;
 
-  // 所有检索都失败 → 明确报错,而不是让"未检索到"的文案掩盖故障
-  if (retrievalFailures > 0 && retrievalCalls === 0) {
-    throw new VectorStoreError("知识库检索失败，请确认 ChromaDB 与索引状态后重试");
-  }
+    // 所有检索都失败 → 明确报错,而不是让"未检索到"的文案掩盖故障
+    if (retrievalFailures > 0 && retrievalCalls === 0) {
+      throw new VectorStoreError("知识库检索失败，请确认 ChromaDB 与索引状态后重试");
+    }
 
-  const responseText = extractFinalText(state, streamedText);
+    return {
+      text: extractFinalText(state, streamedText),
+      streamedText,
+      retrievalCalls,
+      toolCitations,
+    };
+  });
+
   const queryType = await classifyPromise;
+  // Collector 是主路径;工具输出解析是兜底,两者按 refId 合并
+  const allCitations = mergeCitations(citations, result.toolCitations);
+  const citedIds = parseCitedRefIds(result.text);
+  const { valid, invalidRefIds } = validateCitations(citedIds, allCitations);
 
-  // 空结果回退: 无检索调用且回答无引用 → 与旧管线一致的提示语
-  const hasCitation = /\[ref-\d+\]/.test(responseText) || responseText.includes("参考来源");
-  if (retrievalCalls === 0 && !hasCitation) {
+  log.debug(
+    { retrieved: allCitations.length, cited: valid.length, invalid: invalidRefIds.length },
+    "Citation validation",
+  );
+
+  // 没有可验证来源 → 统一回退,避免把模型自身知识伪装成知识库回答
+  if (allCitations.length === 0) {
     const fallback = "知识库中暂未检索到与您问题直接相关的内容。请尝试换一种表述方式,或提出更具体的问题。";
-    if (onToken) onToken(fallback);
-    return { response: fallback, queryType, docCount: 0 };
+    // 流式场景不追加文本:已输出的内容无法撤回,由 done 事件带回最终答案
+    if (result.streamedText.length === 0) onToken?.(fallback);
+    return { response: fallback, queryType, docCount: 0, citations: [] };
   }
 
-  return { response: responseText, queryType, docCount };
+  if (invalidRefIds.length > 0) {
+    log.warn({ invalidRefIds }, "Model cited refs outside the retrieved set");
+  }
+
+  return {
+    response: result.text,
+    queryType,
+    docCount: allCitations.length,
+    citations: allCitations,
+    ...(invalidRefIds.length > 0 ? { invalidRefIds } : {}),
+  };
+}
+
+/** 归一化来源文件名,用于模型引用与检索结果匹配 */
+function sourceKey(source: string): string {
+  return (source.split(/[\\/]/).pop() ?? source).trim().toLowerCase();
+}
+
+/**
+ * 用本次真实检索结果校验 /deep 的 references
+ *
+ * 模型可能编造 source;未命中的条目直接丢弃,命中则用检索到的 domain/refId 回填。
+ */
+function groundReferences(
+  references: AnalysisResult["references"],
+  citations: Citation[],
+): { references: AnalysisResult["references"]; dropped: number } {
+  const bySource = new Map<string, Citation>();
+  for (const citation of citations) {
+    bySource.set(sourceKey(citation.source), citation);
+  }
+
+  const grounded: AnalysisResult["references"] = [];
+  let dropped = 0;
+
+  for (const reference of references) {
+    const match = bySource.get(sourceKey(reference.source));
+    if (!match) {
+      dropped += 1;
+      continue;
+    }
+    grounded.push({
+      source: match.source,
+      content: reference.content.trim() || match.snippet,
+      domain: match.domain,
+      refId: match.refId,
+    });
+  }
+
+  return { references: grounded, dropped };
 }
 
 /**
@@ -171,27 +246,45 @@ async function deepAgenticRag(
  *
  * 直接调用独立编译的 deep_analyst agent。其模型使用 json_object 输出模式,
  * 最终消息为 JSON 文本,这里手动解析并校验为 DEEP_ANALYST_RESPONSE_SCHEMA。
- * 解析失败时回退为文本结论(与旧管线 fallback 语义一致)。
+ * references 必须命中本次检索集合;编造条目会被丢弃并压低置信度。
  */
 async function deepDeepAnalysis(input: string): Promise<AnalysisResult> {
   await assertStoreReady();
 
   const agent = buildDeepAnalystAgent();
-  const result = await agent.invoke(
-    { messages: [{ role: "user", content: input }] },
-    { recursionLimit: config.deepAgentMaxIterations },
+  const { result, citations } = await collectWithCitations(() =>
+    agent.invoke({ messages: [{ role: "user", content: input }] }, { recursionLimit: config.deepAgentMaxIterations }),
   );
+
+  // 兜底:从工具消息中恢复引用(不依赖 AsyncLocalStorage)
+  const toolText = result.messages
+    .filter((message) => (message as { _getType?: () => string })._getType?.() === "tool")
+    .map((message) => (typeof message.content === "string" ? message.content : ""))
+    .join("\n\n");
+  const allCitations = mergeCitations(citations, parseToolCitations(toolText));
 
   const last = result.messages.at(-1);
   const text = typeof last?.content === "string" ? last.content : "";
   const parsed = DEEP_ANALYST_RESPONSE_SCHEMA.safeParse(parseJsonText(text));
-  if (parsed.success) return parsed.data;
+  if (!parsed.success) {
+    return {
+      conclusion: text || "分析失败,请重试。",
+      reasoning: "",
+      references: [],
+      confidence: 0.5,
+    };
+  }
+
+  const { references, dropped } = groundReferences(parsed.data.references, allCitations);
+  if (dropped > 0) {
+    log.warn({ dropped, kept: references.length }, "Dropped ungrounded references from deep analysis");
+  }
 
   return {
-    conclusion: text || "分析失败,请重试。",
-    reasoning: "",
-    references: [],
-    confidence: 0.5,
+    ...parsed.data,
+    references,
+    // 有编造引用时不再给出高置信度
+    confidence: dropped > 0 ? Math.min(parsed.data.confidence, 0.6) : parsed.data.confidence,
   };
 }
 
@@ -214,11 +307,7 @@ export async function agenticRag(
   input: string,
   chatHistory?: string,
   onToken?: (chunk: string) => void,
-): Promise<{
-  response: string;
-  queryType: QueryType;
-  docCount: number;
-}> {
+): Promise<QueryResult> {
   return deepAgenticRag(input, chatHistory, onToken);
 }
 

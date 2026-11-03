@@ -1,0 +1,19 @@
+{"id":"shanghan-gui-zhi","question":"桂枝汤的组成和主治是什么？","expected_sources":["shanghanlun.md","fangji.md"],"should_answer":true}
+{"id":"shanghan-ma-huang","question":"麻黄汤主治什么证？","expected_sources":["shanghanlun.md","fangji.md"],"should_answer":true}
+{"id":"shanghan-liu-jing","question":"六经辨证的基本内容是什么？","expected_sources":["shanghanlun.md"],"should_answer":true}
+{"id":"jingui-za-bing","question":"金匮要略主要讲哪些杂病？","expected_sources":["jinguiyaolue.md"],"should_answer":true}
+{"id":"zhenjiu-zusanli","question":"足三里的定位在哪里？","expected_sources":["zhenjiu.md"],"should_answer":true}
+{"id":"zhenjiu-guanyuan","question":"关元穴的主治是什么？","expected_sources":["zhenjiu.md"],"should_answer":true}
+{"id":"neijing-zangxiang","question":"黄帝内经的藏象学说讲什么？","expected_sources":["huangdi_neijing.md"],"should_answer":true}
+{"id":"neijing-yinyang","question":"阴阳五行在中医里有什么作用？","expected_sources":["huangdi_neijing.md"],"should_answer":true}
+{"id":"bencao-xingwei","question":"神农本草经如何讲药物的性味归经？","expected_sources":["shennongbencao.md","yaoxing.md"],"should_answer":true}
+{"id":"ziwei-an-xing","question":"紫微斗数如何安紫微星？","expected_sources":["ziwei.md"],"should_answer":true}
+{"id":"bazi-zhenguan-qisha","question":"正官格和七杀格有什么区别？","expected_sources":["mingli_bazi.md"],"should_answer":true}
+{"id":"mianxiang-yintang","question":"印堂发暗代表什么？","expected_sources":["mianxiang.md"],"should_answer":true}
+{"id":"yangsheng-siji","question":"四季养生的要点是什么？","expected_sources":["yangsheng.md"],"should_answer":true}
+{"id":"yinshi-yangxu","question":"阴实和阳虚有什么区别？","expected_sources":["yinshi.md"],"should_answer":true}
+{"id":"yian-bianzheng","question":"倪海厦的医案是如何辨证的？","expected_sources":["yian.md"],"should_answer":true}
+{"id":"tiwu-wuxie","question":"五邪辨证是什么？","expected_sources":["tiwu_xie.md"],"should_answer":true}
+{"id":"noanswer-python-csv","question":"如何用 Python 读取 CSV 文件？","expected_sources":[],"should_answer":false}
+{"id":"noanswer-quantum","question":"量子计算的原理是什么？","expected_sources":[],"should_answer":false}
+{"id":"noanswer-car-tire","question":"如何更换汽车轮胎？","expected_sources":[],"should_answer":false}

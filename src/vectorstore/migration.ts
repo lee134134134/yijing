@@ -11,9 +11,12 @@
 import fs from "node:fs";
 import path from "node:path";
 import { Document } from "@langchain/core/documents";
+import { config } from "../config.js";
 import { createLogger } from "../logger.js";
 import type { KnowledgeDocument, KnowledgeMetadata } from "../types.js";
 import { addDocumentsBatched, clearAll, getDocumentCount } from "./chroma.js";
+import { rebuildFts } from "./fts.js";
+import { computeCorpusHash, writeManifest } from "./manifest.js";
 
 const log = createLogger("vectorstore:migration");
 
@@ -93,11 +96,23 @@ export async function runMigration(): Promise<void> {
   console.log("\n正在写入 ChromaDB（生成 Embedding 中）...");
   const startTime = Date.now();
   await addDocumentsBatched(knowledgeDocs);
+  const ftsCount = await rebuildFts(knowledgeDocs);
+  writeManifest({
+    collection: config.chromaCollectionName,
+    embeddingProvider: config.embeddingProvider,
+    embeddingModel: config.embeddingModel,
+    embeddingDimension: config.embeddingDimension,
+    chunkSize: config.chunkSize,
+    chunkOverlap: config.chunkOverlap,
+    corpusHash: computeCorpusHash(knowledgeDocs),
+    chunkCount: knowledgeDocs.length,
+  });
   const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 
   const finalCount = await getDocumentCount();
   console.log(`\n迁移完成!`);
   console.log(`  ChromaDB 文档数: ${finalCount}`);
+  console.log(`  全文索引块: ${ftsCount}`);
   console.log(`  耗时: ${elapsed} 秒`);
 
   // Step 4: 清理旧数据

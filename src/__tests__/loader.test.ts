@@ -24,6 +24,12 @@ describe("inferDomain", () => {
     ["yinshi.md", "阴实理论"],
     ["wenji.md", "文集"],
     ["jiapu.md", "家谱"],
+    ["ziwei.md", "紫微斗数"],
+    ["renjiand.md", "天纪"],
+    ["dimaid.md", "天纪"],
+    ["tiwu_xie.md", "中医临床"],
+    ["yanzhen.md", "中医临床"],
+    ["yaoxing.md", "神农本草经"],
   ];
 
   it.each(cases)("maps %s to %s", (filename, expected) => {

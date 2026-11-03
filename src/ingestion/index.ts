@@ -1,6 +1,8 @@
 import { config } from "../config.js";
 import { createLogger } from "../logger.js";
 import { addDocumentsBatched, clearAll, getDocumentCount, listCollections } from "../vectorstore/chroma.js";
+import { rebuildFts } from "../vectorstore/fts.js";
+import { computeCorpusHash, writeManifest } from "../vectorstore/manifest.js";
 import { chunkDocuments, loadAllMarkdownFiles, printKnowledgeStats } from "./loader.js";
 
 const log = createLogger("ingestion:main");
@@ -36,10 +38,26 @@ async function main() {
   const added = await addDocumentsBatched(chunks);
   const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 
+  log.info("\n🔎 第4步：构建全文索引(FTS5)...");
+  const ftsCount = await rebuildFts(chunks);
+
+  // 最后写清单:只有向量 + 全文都成功,索引才算可用
+  writeManifest({
+    collection: config.chromaCollectionName,
+    embeddingProvider: config.embeddingProvider,
+    embeddingModel: config.embeddingModel,
+    embeddingDimension: config.embeddingDimension,
+    chunkSize: config.chunkSize,
+    chunkOverlap: config.chunkOverlap,
+    corpusHash: computeCorpusHash(chunks),
+    chunkCount: chunks.length,
+  });
+
   const count = await getDocumentCount();
 
   log.info(`\n✅ 索引构建完成!`);
   log.info(`  写入知识块: ${added}`);
+  log.info(`  全文索引块: ${ftsCount}`);
   log.info(`  总文档数: ${count}`);
   log.info(`  耗时: ${elapsed} 秒`);
   log.info(`  平均速度: ${(added / parseFloat(elapsed)).toFixed(1)} 块/秒`);

@@ -56,9 +56,10 @@ export async function statusRoutes(server: FastifyInstance) {
           chunkOverlap: config.chunkOverlap,
           llm,
           health: {
-            chroma: { ok: store.ok, ...(store.error ? { error: store.error } : {}) },
+            chroma: { ok: store.chroma, ...(store.error ? { error: store.error } : {}) },
             embedding: { ok: embeddingOk, provider: config.embeddingProvider, model: config.embeddingModel },
             llm: { ok: llmOk },
+            manifest: store.manifest,
           },
           index: {
             collection: config.chromaCollectionName,

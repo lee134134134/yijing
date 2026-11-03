@@ -19,8 +19,10 @@ import { ChromaClient, type Collection, type Where } from "chromadb";
 import { config } from "../config.js";
 import { StoreError, VectorStoreError } from "../errors.js";
 import { createLogger } from "../logger.js";
-import type { KnowledgeDocument, KnowledgeMetadata } from "../types.js";
+import type { KnowledgeDocument, KnowledgeMetadata, RetrievedDocument } from "../types.js";
 import { getEmbeddings } from "./embeddings.js";
+import { clearFts, searchFts } from "./fts.js";
+import { checkManifest } from "./manifest.js";
 
 const log = createLogger("vectorstore:chroma");
 
@@ -32,7 +34,7 @@ const SEARCH_CACHE_MAX = 100;
  * ingest 是唯一的写入口,addDocumentsBatched / clearAll / resetStore 会显式失效;
  * 缓存仅共享 Document 的只读视图(pageContent/metadata),调用方不得修改。
  */
-const searchCache = new Map<string, KnowledgeDocument[]>();
+const searchCache = new Map<string, RetrievedDocument[]>();
 
 /** 检索缓存 key */
 function searchCacheKey(query: string, topK: number): string {
@@ -40,7 +42,7 @@ function searchCacheKey(query: string, topK: number): string {
 }
 
 /** 写入检索缓存并做 LRU 淘汰 */
-function cacheSearchResult(key: string, docs: KnowledgeDocument[]): void {
+function cacheSearchResult(key: string, docs: RetrievedDocument[]): void {
   searchCache.set(key, docs);
   while (searchCache.size > SEARCH_CACHE_MAX) {
     const oldest = searchCache.keys().next().value;
@@ -113,6 +115,8 @@ async function getCollection(create: boolean = true): Promise<Collection> {
   if (create) {
     _collection = await client.getOrCreateCollection({
       name: config.chromaCollectionName,
+      // 统一使用 cosine:相似度阈值(1 - distance)才有明确语义
+      configuration: { hnsw: { space: "cosine" } },
     });
     return _collection;
   }
@@ -128,14 +132,18 @@ async function getCollection(create: boolean = true): Promise<Collection> {
 }
 
 /**
- * 解析 ChromaDB query 返回,重建 KnowledgeDocument 列表
+ * 解析 ChromaDB query 返回,重建带相似度的 KnowledgeDocument 列表
+ *
+ * Chroma 返回 distance;集合使用 cosine 时 similarity = 1 - distance。
  */
-function parseQueryResult(result: Awaited<ReturnType<Collection["query"]>>): KnowledgeDocument[] {
+function parseQueryResult(result: Awaited<ReturnType<Collection["query"]>>): RetrievedDocument[] {
   const docs = result.documents?.[0] ?? [];
   const metas = result.metadatas?.[0] ?? [];
+  const distances = result.distances?.[0] ?? [];
+
   return docs.map((pageContent, i) => {
     const meta = (metas[i] ?? {}) as Record<string, unknown>;
-    return new Document<KnowledgeMetadata>({
+    const doc = new Document<KnowledgeMetadata>({
       pageContent: pageContent ?? "",
       metadata: {
         source: String(meta.source ?? ""),
@@ -145,7 +153,13 @@ function parseQueryResult(result: Awaited<ReturnType<Collection["query"]>>): Kno
         h3: meta.h3 ? String(meta.h3) : undefined,
         lineRange: meta.lineRange ? String(meta.lineRange) : undefined,
       },
-    });
+    }) as RetrievedDocument;
+
+    const distance = distances[i];
+    if (typeof distance === "number" && Number.isFinite(distance)) {
+      doc.score = Math.max(0, Math.min(1, 1 - distance));
+    }
+    return doc;
   });
 }
 
@@ -154,16 +168,33 @@ function parseQueryResult(result: Awaited<ReturnType<Collection["query"]>>): Kno
 // ========================================
 
 /**
+ * 纯向量检索(带相似度阈值)
+ */
+async function denseSearch(query: string, topK: number, minScore: number): Promise<RetrievedDocument[]> {
+  const collection = await getCollection(false);
+  const queryEmbedding = await getEmbeddings().embedQuery(query);
+  const result = await collection.query({
+    queryEmbeddings: [queryEmbedding],
+    nResults: topK,
+    include: ["documents", "metadatas", "distances"],
+  });
+
+  const docs = parseQueryResult(result);
+  return docs.filter((doc) => doc.score === undefined || doc.score >= minScore);
+}
+
+/**
  * 语义搜索知识库
  *
- * 使用 Embedding 将查询转为向量,在 ChromaDB 中执行余弦相似度搜索。
- * 返回按相关度降序排列的知识文档列表。
+ * - dense:ChromaDB cosine 相似度,低于 minScore 丢弃
+ * - hybrid(默认):追加 FTS5/BM25,经 RRF 融合
+ * 向量库故障抛 VectorStoreError;FTS 故障只降级为 dense。
  */
 export async function searchKnowledge(
   query: string,
   topK: number = config.retrievalTopK,
-): Promise<KnowledgeDocument[]> {
-  const cacheKey = searchCacheKey(query, topK);
+): Promise<RetrievedDocument[]> {
+  const cacheKey = `${searchCacheKey(query, topK)}:${config.minScore}:${config.enableHybrid ? "hybrid" : "dense"}`;
   const cached = searchCache.get(cacheKey);
   if (cached) {
     // LRU:命中后刷新位置
@@ -173,21 +204,28 @@ export async function searchKnowledge(
   }
 
   try {
-    const collection = await getCollection(false);
-    const queryEmbedding = await getEmbeddings().embedQuery(query);
-    const result = await collection.query({
-      queryEmbeddings: [queryEmbedding],
-      nResults: topK,
-      include: ["documents", "metadatas"],
-    });
+    const candidateK = config.enableHybrid ? topK * 3 : topK;
+    const dense = await denseSearch(query, candidateK, config.minScore);
 
-    const docs = parseQueryResult(result);
+    let docs: RetrievedDocument[] = dense.slice(0, topK);
+    if (config.enableHybrid) {
+      let lexical: RetrievedDocument[] = [];
+      try {
+        lexical = await searchFts(query, candidateK);
+      } catch (err) {
+        log.warn({ err, query }, "FTS search failed, falling back to dense only");
+      }
+      if (lexical.length > 0) {
+        docs = rrfFuse([dense, lexical], topK);
+      }
+    }
+
     if (docs.length === 0) {
-      log.debug({ query }, "No results found");
+      log.debug({ query, minScore: config.minScore }, "No results found");
       return [];
     }
 
-    log.debug({ query, results: docs.length }, "Search completed");
+    log.debug({ query, results: docs.length, hybrid: config.enableHybrid }, "Search completed");
     cacheSearchResult(cacheKey, docs);
     return docs;
   } catch (err) {
@@ -210,7 +248,7 @@ export async function searchByDomain(
   query: string,
   domain: string,
   topK: number = config.retrievalTopK,
-): Promise<KnowledgeDocument[]> {
+): Promise<RetrievedDocument[]> {
   try {
     const collection = await getCollection(false);
     const queryEmbedding = await getEmbeddings().embedQuery(query);
@@ -219,10 +257,10 @@ export async function searchByDomain(
       queryEmbeddings: [queryEmbedding],
       nResults: topK,
       where: filter,
-      include: ["documents", "metadatas"],
+      include: ["documents", "metadatas", "distances"],
     });
 
-    const docs = parseQueryResult(result);
+    const docs = parseQueryResult(result).filter((doc) => doc.score === undefined || doc.score >= config.minScore);
     if (docs.length === 0) {
       log.debug({ query, domain }, "No domain results found");
       return [];
@@ -251,8 +289,8 @@ export async function searchByDomain(
  *
  * RRF score = Σ 1/(k + rank),其中 rank 从 0 开始。
  */
-function rrfFuse(entries: KnowledgeDocument[][], topK: number, k: number = 60): KnowledgeDocument[] {
-  const fused = new Map<string, { doc: KnowledgeDocument; score: number }>();
+function rrfFuse(entries: RetrievedDocument[][], topK: number, k: number = 60): RetrievedDocument[] {
+  const fused = new Map<string, { doc: RetrievedDocument; score: number }>();
   const seen = new Set<string>();
 
   for (const results of entries) {
@@ -281,7 +319,7 @@ function rrfFuse(entries: KnowledgeDocument[][], topK: number, k: number = 60): 
 export async function multiQuerySearch(
   queries: string[],
   topK: number = config.retrievalTopK,
-): Promise<KnowledgeDocument[]> {
+): Promise<RetrievedDocument[]> {
   if (queries.length === 0) return [];
   if (queries.length === 1) return searchKnowledge(queries[0]!, topK);
 
@@ -383,16 +421,23 @@ export interface StoreHealth {
   collection: boolean;
   docCount: number;
   collections: string[];
+  /** 索引清单校验结果 */
+  manifest: { ok: boolean; error?: string };
+  /** 用户可读的错误(可进 API 响应) */
   error?: string;
+  /** 原始异常信息(仅用于 /ready 诊断与日志) */
+  detail?: string;
 }
 
 /**
  * 探测知识库健康状态
  *
- * ok 的定义:服务可达 + 集合存在 + 至少有 1 个文档。
- * 集合为空视为"未构建索引",同样不是可用状态。
+ * ok 的定义:服务可达 + 集合存在 + 至少有 1 个文档 + 索引清单与配置一致。
  */
 export async function getStoreHealth(): Promise<StoreHealth> {
+  const manifest = checkManifest();
+  const manifestCheck = { ok: manifest.ok, ...(manifest.error ? { error: manifest.error } : {}) };
+
   try {
     await getClient().heartbeat();
   } catch (err) {
@@ -402,7 +447,9 @@ export async function getStoreHealth(): Promise<StoreHealth> {
       collection: false,
       docCount: 0,
       collections: [],
-      error: errorMessage(err),
+      manifest: manifestCheck,
+      error: "无法连接 ChromaDB，请确认服务已启动",
+      detail: errorMessage(err),
     };
   }
 
@@ -411,20 +458,23 @@ export async function getStoreHealth(): Promise<StoreHealth> {
     const names = collections.map((c) => c.name);
     const exists = names.includes(config.chromaCollectionName);
     const docCount = exists ? await getDocumentCount() : 0;
-    const ok = exists && docCount > 0;
+
+    const error = !exists
+      ? `集合 "${config.chromaCollectionName}" 不存在，请运行 npm run ingest`
+      : docCount === 0
+        ? "知识库为空，请运行 npm run ingest 构建索引"
+        : !manifest.ok
+          ? manifest.error
+          : undefined;
+
     return {
-      ok,
+      ok: exists && docCount > 0 && manifest.ok,
       chroma: true,
       collection: exists,
       docCount,
       collections: names,
-      ...(ok
-        ? {}
-        : {
-            error: exists
-              ? "知识库为空，请运行 npm run ingest 构建索引"
-              : `集合 "${config.chromaCollectionName}" 不存在，请运行 npm run ingest`,
-          }),
+      manifest: manifestCheck,
+      ...(error ? { error } : {}),
     };
   } catch (err) {
     return {
@@ -433,7 +483,9 @@ export async function getStoreHealth(): Promise<StoreHealth> {
       collection: false,
       docCount: 0,
       collections: [],
-      error: errorMessage(err),
+      manifest: manifestCheck,
+      error: "读取 ChromaDB 集合失败",
+      detail: errorMessage(err),
     };
   }
 }
@@ -454,13 +506,8 @@ export async function assertStoreReady(): Promise<void> {
   const health = await getStoreHealth();
   _healthCache = { at: now, ok: health.ok, ...(health.error ? { error: health.error } : {}) };
   if (!health.ok) {
-    // 原始错误只进日志与 /ready,对外返回统一的可读文案
-    log.error({ error: health.error, collection: health.collection }, "Knowledge store not ready");
-    throw new VectorStoreError(
-      health.collection
-        ? "知识库当前不可用，请确认 ChromaDB 正在运行且索引已构建"
-        : "知识库索引尚未就绪，请先运行 npm run ingest",
-    );
+    log.error({ error: health.error, detail: health.detail }, "Knowledge store not ready");
+    throw new VectorStoreError(health.error ?? "知识库当前不可用");
   }
 }
 
@@ -473,6 +520,7 @@ export async function clearAll(): Promise<void> {
   try {
     await getClient().deleteCollection({ name: config.chromaCollectionName });
     _collection = null;
+    await clearFts();
     invalidateSearchCache();
     invalidateHealthCache();
     log.info("Collection deleted");

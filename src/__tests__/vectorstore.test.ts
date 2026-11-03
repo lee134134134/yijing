@@ -30,7 +30,15 @@ vi.mock("../config.js", () => ({
     chromaDbUrl: "http://localhost:8000",
     chromaCollectionName: "test_collection",
     retrievalTopK: 5,
+    minScore: 0,
+    enableHybrid: false,
+    ftsDbPath: "/tmp/yijing-fts-test.db",
   },
+}));
+
+vi.mock("../vectorstore/fts.js", () => ({
+  searchFts: vi.fn(async () => []),
+  clearFts: vi.fn(async () => undefined),
 }));
 
 vi.mock("../vectorstore/embeddings.js", () => ({

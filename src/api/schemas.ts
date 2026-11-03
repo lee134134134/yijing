@@ -33,15 +33,33 @@ export const queryBodySchema = {
   },
 } as const;
 
+/** 引用条目(与 src/types.ts 的 Citation 对应) */
+export const citationSchema = {
+  type: "object",
+  required: ["refId", "source", "domain", "snippet"],
+  properties: {
+    refId: { type: "string" },
+    source: { type: "string" },
+    h1: { type: "string" },
+    h2: { type: "string" },
+    h3: { type: "string" },
+    lineRange: { type: "string" },
+    domain: { type: "string" },
+    snippet: { type: "string" },
+    score: { type: "number" },
+  },
+} as const;
+
 /** POST /api/query 响应(stream=false 时) */
 export const queryResponseSchema = {
   type: "object",
-  required: ["response", "queryType", "docCount", "elapsed"],
+  required: ["response", "queryType", "docCount", "elapsed", "citations"],
   properties: {
     response: { type: "string" },
     queryType: { type: "string" },
     docCount: { type: "integer" },
     elapsed: { type: "number" },
+    citations: { type: "array", items: citationSchema },
   },
 } as const;
 
@@ -71,6 +89,7 @@ export const deepResponseSchema = {
           source: { type: "string" },
           content: { type: "string" },
           domain: { type: "string" },
+          refId: { type: "string" },
         },
       },
     },

@@ -42,9 +42,11 @@ npx tsx src/index.ts "桂枝汤的组成和适应症是什么？"
 | `CHUNK_SIZE` | `800` | 文本分块大小（字符数） |
 | `CHUNK_OVERLAP` | `150` | 分块重叠（字符数） |
 | `RETRIEVAL_TOP_K` | `5` | 每次检索返回的文档数 |
+| `MIN_SCORE` | `0.35` | 向量检索最低相似度（0–1），低于阈值丢弃 |
+| `ENABLE_HYBRID` | `true` | dense + BM25（FTS5）混合检索 |
 | `EMBEDDING_PROVIDER` | `local` | Embedding 提供方：`local`（本地模型，离线可用）/ `api`（OpenAI 兼容 API） |
-| `EMBEDDING_MODEL` | `Xenova/all-MiniLM-L6-v2` | Embedding 模型（`api` 时默认 `text-embedding-3-small`） |
-| `EMBEDDING_DIMENSION` | `384` | 向量维度（`api` 时默认 `1536`） |
+| `EMBEDDING_MODEL` | `Xenova/bge-small-zh-v1.5` | Embedding 模型（`api` 时默认 `text-embedding-3-small`） |
+| `EMBEDDING_DIMENSION` | `512` | 向量维度（`api` 时默认 `1536`） |
 | `EMBEDDING_BASE_URL` | 复用 `OPENAI_BASE_URL` | 独立 Embedding API 地址（仅 `provider=api` 生效） |
 | `EMBEDDING_API_KEY` | 复用 `OPENAI_API_KEY` | 独立 Embedding API Key（仅 `provider=api` 生效） |
 | `EMBEDDING_CACHE_DIR` | `./data/models` | 本地模型缓存目录（Docker 构建期预下载至 `/app/model-cache`） |
@@ -59,7 +61,7 @@ npx tsx src/index.ts "桂枝汤的组成和适应症是什么？"
 | `KNOWLEDGE_DIR` | `./memory` | 知识库 Markdown 目录 |
 
 > 切换 `EMBEDDING_PROVIDER`（local ↔ api）或更换 `EMBEDDING_MODEL` 会改变向量语义/维度，必须重新执行 `npm run ingest`。
-> 中文知识库建议：`Xenova/bge-small-zh-v1.5`（512 维，中文语义区分度显著优于默认英文模型）。
+> 默认使用 `Xenova/bge-small-zh-v1.5`（512 维，中文语义区分度显著优于英文模型）；索引清单会校验模型/维度/分块参数，不一致时直接报错而不是静默返回空结果。
 
 ## 第三方大模型接入
 
@@ -132,6 +134,7 @@ DEEPSEEK_API_KEY=sk-ds...
 - 监听 `0.0.0.0` / 局域网地址时必须配置 `API_KEYS`，否则启动失败。
 - `API_KEYS` 不会回退 `OPENAI_API_KEY`：服务访问密钥与 LLM 供应商密钥必须分离。
 - `GET /health` 为存活检查；`GET /ready` 会真实探测 ChromaDB 与 LLM 配置，未就绪返回 503。
+- `POST /api/query` 返回结构化 `citations[]`（`refId/source/h2/snippet/score`）；SSE 模式额外发送 `citation` 事件。
 
 ## 命令
 
@@ -140,8 +143,9 @@ DEEPSEEK_API_KEY=sk-ds...
 | `npm run dev` | 启动交互式 CLI |
 | `npm run dev:tui` | TUI 模式 |
 | `npm run server` | 启动 Fastify REST API 服务 |
-| `npm run ingest` | 构建 ChromaDB 向量索引 |
+| `npm run ingest` | 构建 ChromaDB 向量索引 + FTS5 全文索引 |
 | `npm run migrate` | JSON → ChromaDB 数据迁移 |
+| `npm run eval` | 检索质量评测（recall@5 / MRR / 无答案准确率） |
 | `/deep <问题>` | 深度分析（结构化 JSON 输出） |
 | `/history` | 查看对话历史 |
 | `/status` | 知识库状态 |

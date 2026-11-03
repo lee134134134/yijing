@@ -176,9 +176,10 @@ export const config = {
    */
   embeddingProvider,
   embeddingModel:
-    process.env.EMBEDDING_MODEL || (embeddingProvider === "api" ? "text-embedding-3-small" : "Xenova/all-MiniLM-L6-v2"),
-  /** Embedding 向量维度(local=384,api=1536;仅作信息展示与校验,实际维度由模型/API 决定) */
-  embeddingDimension: parseInt(process.env.EMBEDDING_DIMENSION || (embeddingProvider === "api" ? "1536" : "384"), 10),
+    process.env.EMBEDDING_MODEL ||
+    (embeddingProvider === "api" ? "text-embedding-3-small" : "Xenova/bge-small-zh-v1.5"),
+  /** Embedding 向量维度(local=512,api=1536;实际维度由模型/API 决定) */
+  embeddingDimension: parseInt(process.env.EMBEDDING_DIMENSION || (embeddingProvider === "api" ? "1536" : "512"), 10),
   /** 独立的 Embedding API 地址（默认复用 OPENAI_BASE_URL） */
   embeddingBaseUrl: process.env.EMBEDDING_BASE_URL || process.env.OPENAI_BASE_URL || "https://api.openai.com/v1",
   /** 独立的 Embedding API Key（默认复用 OPENAI_API_KEY） */
@@ -194,6 +195,12 @@ export const config = {
 
   // ── 检索 ──
   retrievalTopK: parseInt(process.env.RETRIEVAL_TOP_K || "5", 10),
+  /** 向量检索最低相似度(0–1),低于阈值视为不相关 */
+  minScore: parseFloat(process.env.MIN_SCORE || "0.35"),
+  /** 是否启用 dense + BM25(FTS5)混合检索 */
+  enableHybrid: process.env.ENABLE_HYBRID !== "false",
+  /** FTS5 索引文件路径 */
+  ftsDbPath: process.env.FTS_DB_PATH || path.resolve(projectRoot, "./data/fts.db"),
   enableReranking: process.env.ENABLE_RERANKING === "true",
 
   // ── 查询重写 ──

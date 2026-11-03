@@ -5,6 +5,8 @@
  * controllable fake agents, so tests run without LLM/ChromaDB/network.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { getCitationCollector } from "../rag/citation-collector.js";
+import type { Citation } from "../types.js";
 
 // ── Shared fakes (hoisted so vi.mock factories can reference them) ──
 const h = vi.hoisted(() => {
@@ -91,7 +93,11 @@ vi.mock("deepagents", () => ({
 }));
 
 // ── Fake run helpers (streamEvents v3 shape) ─────────────────────
-type FakeToolCall = { name: string; output: string };
+type FakeToolCall = { name: string; output: string; citations?: Citation[] };
+
+function fakeCitation(refId: string, source: string, domain = "中医临床"): Citation {
+  return { refId, source, domain, snippet: `${source} 片段` };
+}
 
 function makeFakeRun(text: string, toolCalls: FakeToolCall[] = []) {
   return {
@@ -104,6 +110,8 @@ function makeFakeRun(text: string, toolCalls: FakeToolCall[] = []) {
     })(),
     toolCalls: (async function* () {
       for (const tc of toolCalls) {
+        // 模拟真实工具:在请求级收集器中登记引用
+        if (tc.citations?.length) getCitationCollector()?.addAll(tc.citations);
         yield { name: tc.name, output: tc.output };
       }
     })(),
@@ -189,25 +197,38 @@ describe("agenticRag (deep mode)", () => {
     ]);
   });
 
-  it("counts docCount from retrieval tool outputs (【来源】 anchors)", async () => {
+  it("counts unique citations from retrieval tools", async () => {
     vi.mocked(h.agent.streamEvents).mockResolvedValue(
       makeFakeRun("回答", [
-        { name: "search_knowledge_base", output: "【来源】a.md\n\n---\n\n【来源】b.md" },
-        { name: "search_by_domain", output: "【来源】c.md" },
+        {
+          name: "search_knowledge_base",
+          output: "【来源】a.md\n\n---\n\n【来源】b.md",
+          citations: [fakeCitation("aaaaaaaa", "a.md"), fakeCitation("bbbbbbbb", "b.md")],
+        },
+        {
+          name: "search_by_domain",
+          output: "【来源】c.md",
+          citations: [fakeCitation("cccccccc", "c.md")],
+        },
         { name: "other_tool", output: "【来源】x.md" },
       ]),
     );
 
     const result = await agenticRag("失眠");
 
-    // 两个检索工具共 3 个来源;非检索工具不计入
+    // 两个检索工具共 3 个唯一来源;非检索工具不计入
     expect(result.docCount).toBe(3);
+    expect(result.citations).toHaveLength(3);
   });
 
   it("streams output via onToken callback", async () => {
     vi.mocked(h.agent.streamEvents).mockResolvedValue(
       makeFakeRun("失眠多梦属于心脾两虚证，可参考归脾汤加减。", [
-        { name: "search_knowledge_base", output: "【来源】a.md" },
+        {
+          name: "search_knowledge_base",
+          output: "【来源】a.md",
+          citations: [fakeCitation("abc12345", "a.md")],
+        },
       ]),
     );
 
@@ -220,15 +241,23 @@ describe("agenticRag (deep mode)", () => {
     expect(chunks.join("")).toContain("心脾两虚");
   });
 
-  it("keeps [ref-N] citations in the response", async () => {
-    const cited = "失眠多梦属心脾两虚，参考归脾汤[ref-1]。\n\n参考来源:\n[ref-1] zhongyi_xin.md — 不寐";
+  it("keeps stable [ref:<id>] citations in the response", async () => {
+    const cited = "失眠多梦属心脾两虚，参考归脾汤[ref:abc12345]。\n\n参考来源:\n[ref:abc12345] a.md — 不寐";
     vi.mocked(h.agent.streamEvents).mockResolvedValue(
-      makeFakeRun(cited, [{ name: "search_knowledge_base", output: "【来源】a.md" }]),
+      makeFakeRun(cited, [
+        {
+          name: "search_knowledge_base",
+          output: "[ref:abc12345] 【来源】a.md",
+          citations: [fakeCitation("abc12345", "a.md")],
+        },
+      ]),
     );
 
     const result = await agenticRag("失眠");
 
-    expect(result.response).toContain("[ref-1]");
+    expect(result.response).toContain("[ref:abc12345]");
+    expect(result.citations).toHaveLength(1);
+    expect(result.invalidRefIds).toBeUndefined();
   });
 
   it("falls back to no-result message when no retrieval and no citation", async () => {
@@ -240,13 +269,66 @@ describe("agenticRag (deep mode)", () => {
     expect(result.docCount).toBe(0);
   });
 
-  it("does not fall back when response already contains citations", async () => {
-    const cited = "相关论述见[ref-1]。";
+  it("falls back when the model cites a ref that was never retrieved", async () => {
+    const cited = "相关论述见[ref:deadbeef]。";
     vi.mocked(h.agent.streamEvents).mockResolvedValue(makeFakeRun(cited));
 
     const result = await agenticRag("失眠");
 
+    expect(result.response).toContain("未检索到");
+    expect(result.citations).toEqual([]);
+  });
+
+  it("keeps the answer when cited ref matches a retrieved citation", async () => {
+    const cited = "相关论述见[ref:abc12345]。";
+    vi.mocked(h.agent.streamEvents).mockResolvedValue(
+      makeFakeRun(cited, [
+        {
+          name: "search_knowledge_base",
+          output: "[ref:abc12345] 【来源】a.md",
+          citations: [fakeCitation("abc12345", "a.md")],
+        },
+      ]),
+    );
+
+    const result = await agenticRag("失眠");
+
     expect(result.response).toBe(cited);
+    expect(result.citations).toHaveLength(1);
+  });
+
+  it("recovers citations from tool output when the collector is empty", async () => {
+    vi.mocked(h.agent.streamEvents).mockResolvedValue(
+      makeFakeRun("见[ref:abcd1234]。", [
+        {
+          name: "search_knowledge_base",
+          output: "[ref:abcd1234] 【来源】a.md > 不寐 | 中医临床\n内容",
+          // 故意不写 citations:验证工具输出解析兜底
+        },
+      ]),
+    );
+
+    const result = await agenticRag("失眠");
+
+    expect(result.docCount).toBe(1);
+    expect(result.citations?.[0]).toMatchObject({ refId: "abcd1234", source: "a.md" });
+  });
+
+  it("records invalid ref ids without dropping the answer", async () => {
+    const cited = "相关论述见[ref:abc12345]与[ref:deadbeef]。";
+    vi.mocked(h.agent.streamEvents).mockResolvedValue(
+      makeFakeRun(cited, [
+        {
+          name: "search_knowledge_base",
+          output: "[ref:abc12345] 【来源】a.md",
+          citations: [fakeCitation("abc12345", "a.md")],
+        },
+      ]),
+    );
+
+    const result = await agenticRag("失眠");
+
+    expect(result.invalidRefIds).toEqual(["deadbeef"]);
   });
 
   it("builds the deep agent exactly once (singleton)", async () => {
@@ -264,18 +346,22 @@ describe("agenticRag (deep mode)", () => {
 // ================================================================
 describe("deepAnalysis (deep mode)", () => {
   it("returns AnalysisResult parsed from json_object final message", async () => {
-    vi.mocked(h.analyst.invoke).mockResolvedValue({
-      messages: [
-        {
-          content: JSON.stringify({
-            conclusion: "脾肾阳虚,治宜温补脾肾",
-            reasoning: "1. 阳虚则寒...",
-            references: [{ source: "zhongyi_xin.md", content: "脾肾阳虚...", domain: "中医临床" }],
-            confidence: 0.85,
-            suggestions: ["附子理中丸", "艾灸关元"],
-          }),
-        },
-      ],
+    vi.mocked(h.analyst.invoke).mockImplementation(async () => {
+      // 模拟 deep_analyst 在检索工具中登记引用
+      getCitationCollector()?.add(fakeCitation("abc12345", "zhongyi_xin.md"));
+      return {
+        messages: [
+          {
+            content: JSON.stringify({
+              conclusion: "脾肾阳虚,治宜温补脾肾",
+              reasoning: "1. 阳虚则寒...",
+              references: [{ source: "zhongyi_xin.md", content: "脾肾阳虚...", domain: "中医临床" }],
+              confidence: 0.85,
+              suggestions: ["附子理中丸", "艾灸关元"],
+            }),
+          },
+        ],
+      };
     });
 
     const result = await deepAnalysis("分析脾肾阳虚的辨证要点");
@@ -283,7 +369,11 @@ describe("deepAnalysis (deep mode)", () => {
     expect(result.conclusion).toBe("脾肾阳虚,治宜温补脾肾");
     expect(result.reasoning).toBe("1. 阳虚则寒...");
     expect(result.references).toHaveLength(1);
-    expect(result.references[0]).toMatchObject({ source: "zhongyi_xin.md", domain: "中医临床" });
+    expect(result.references[0]).toMatchObject({
+      source: "zhongyi_xin.md",
+      domain: "中医临床",
+      refId: "abc12345",
+    });
     expect(result.confidence).toBe(0.85);
     expect(result.suggestions).toEqual(["附子理中丸", "艾灸关元"]);
   });

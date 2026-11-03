@@ -104,8 +104,14 @@ export async function queryRoutes(server: FastifyInstance) {
 
           const elapsed = (Date.now() - startTime) / 1000;
           const label = QUERY_TYPES_LABEL[result.queryType] || "知识问答";
+          const citations = result.citations ?? [];
 
           if (!clientGone) {
+            // 逐条引用事件(前端可直接渲染来源卡片)
+            for (const citation of citations) {
+              reply.raw.write(`event: citation\ndata: ${JSON.stringify(citation)}\n\n`);
+            }
+
             // meta event（流结束后发送，内容已包含脚注）
             const meta = JSON.stringify({
               type: "meta",
@@ -118,7 +124,13 @@ export async function queryRoutes(server: FastifyInstance) {
             // done event
             const doneData = JSON.stringify({
               type: "done",
-              data: { response: result.response, queryType: result.queryType, docCount: result.docCount, elapsed },
+              data: {
+                response: result.response,
+                queryType: result.queryType,
+                docCount: result.docCount,
+                citations,
+                elapsed,
+              },
             });
             reply.raw.write(`event: done\ndata: ${doneData}\n\n`);
             reply.raw.end();
@@ -151,6 +163,7 @@ export async function queryRoutes(server: FastifyInstance) {
           queryType: result.queryType,
           docCount: result.docCount,
           elapsed,
+          citations: result.citations ?? [],
         };
 
         logRequestComplete(rc, 200, { queryType: result.queryType, docCount: result.docCount, elapsed });

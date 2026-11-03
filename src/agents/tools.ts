@@ -9,7 +9,10 @@
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
 import { config } from "../config.js";
+import { buildCitation } from "../rag/citation.js";
+import { getCitationCollector } from "../rag/citation-collector.js";
 import { rewriteQuery } from "../rag/query-rewriting.js";
+import type { RetrievedDocument } from "../types.js";
 import { multiQuerySearch, searchByDomain, searchKnowledge } from "../vectorstore/chroma.js";
 
 /** 知识库领域枚举(与 ingestion 的 inferDomain 保持一致) */
@@ -20,6 +23,7 @@ export const KNOWLEDGE_DOMAINS = [
   "神农本草经",
   "针灸",
   "天纪",
+  "紫微斗数",
   "命理八字",
   "面相学",
   "中医临床",
@@ -34,19 +38,32 @@ export const KNOWLEDGE_DOMAINS = [
 const DOC_TRUNCATE = 800;
 
 /**
- * 将检索结果格式化为带引用锚点的文本
+ * 将检索结果格式化为带稳定引用锚点的文本
+ *
+ * 每个唯一文档输出 `[ref:<8位id>]`,并写入请求级 CitationCollector。
+ * 同一次请求内重复检索到同一块时按 refId 去重,避免模型看到重复编号。
  */
-function formatDocs(docs: Awaited<ReturnType<typeof searchKnowledge>>): string {
+function formatDocs(docs: RetrievedDocument[]): string {
   if (docs.length === 0) return "未找到相关知识。";
-  return docs
-    .map(
-      (doc, i) =>
-        `[${i + 1}] 【来源】${doc.metadata.source}${
-          doc.metadata.h2 ? ` > ${doc.metadata.h2}` : ""
-        } | ${doc.metadata.domain}
-${doc.pageContent.slice(0, DOC_TRUNCATE)}`,
-    )
-    .join("\n\n---\n\n");
+
+  const collector = getCitationCollector();
+  const seen = new Set<string>();
+  const blocks: string[] = [];
+
+  for (const doc of docs) {
+    const citation = buildCitation(doc);
+    if (seen.has(citation.refId)) continue;
+    seen.add(citation.refId);
+    collector?.add(citation);
+
+    const section = citation.h2 ? ` > ${citation.h2}` : "";
+    const score = citation.score !== undefined ? ` | 相关度 ${citation.score.toFixed(2)}` : "";
+    blocks.push(
+      `[ref:${citation.refId}] 【来源】${citation.source}${section} | ${citation.domain}${score}\n${doc.pageContent.slice(0, DOC_TRUNCATE)}`,
+    );
+  }
+
+  return blocks.join("\n\n---\n\n");
 }
 
 /**
@@ -56,7 +73,7 @@ ${doc.pageContent.slice(0, DOC_TRUNCATE)}`,
  * 多个检索友好子查询,再经 RRF 多查询融合提升召回;rewriteQuery 内部
  * 失败时自动回退原查询,不会阻断检索。否则直连单查询检索。
  */
-async function retrieveKnowledge(query: string, topK: number) {
+async function retrieveKnowledge(query: string, topK: number): Promise<RetrievedDocument[]> {
   if (!config.enableQueryRewrite) return searchKnowledge(query, topK);
   const rewritten = await rewriteQuery(query, config.rewriteNumQueries);
   return multiQuerySearch(rewritten.all, topK);

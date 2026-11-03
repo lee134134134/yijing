@@ -101,6 +101,15 @@ export function validateConfig(): ValidationResult {
   if (config.chunkSize < 100 || config.chunkSize > 5000) {
     errors.push(`CHUNK_SIZE (${config.chunkSize}) must be between 100 and 5000`);
   }
+  if (config.chunkOverlap < 0 || config.chunkOverlap >= config.chunkSize) {
+    errors.push(`CHUNK_OVERLAP (${config.chunkOverlap}) must be >= 0 and < CHUNK_SIZE (${config.chunkSize})`);
+  }
+  if (!Number.isFinite(config.minScore) || config.minScore < 0 || config.minScore > 1) {
+    errors.push(`MIN_SCORE (${config.minScore}) must be between 0 and 1`);
+  }
+  if (!Number.isInteger(config.embeddingDimension) || config.embeddingDimension <= 0) {
+    errors.push(`EMBEDDING_DIMENSION (${config.embeddingDimension}) must be a positive integer`);
+  }
 
   // ── API 配置验证 ──
   if (config.apiPort < 1 || config.apiPort > 65535) {

@@ -18,7 +18,7 @@ RUN npm run build
 # 的 q8 一致,否则运行时缓存 MISS 会重新联网下载)。
 # (切换 EMBEDDING_PROVIDER=api 时此步为多余下载,可删除本段)
 RUN mkdir -p /app/model-cache && \
-    EMBEDDING_MODEL="${EMBEDDING_MODEL:-Xenova/all-MiniLM-L6-v2}" \
+    EMBEDDING_MODEL="${EMBEDDING_MODEL:-Xenova/bge-small-zh-v1.5}" \
     HF_MIRROR="${HF_MIRROR:-https://hf-mirror.com/}" \
     node -e "import('@huggingface/transformers').then(async ({ pipeline, env }) => { \
       env.cacheDir = '/app/model-cache'; \

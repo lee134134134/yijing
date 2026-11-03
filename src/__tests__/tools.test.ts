@@ -55,8 +55,8 @@ describe("search_knowledge_base", () => {
 
     expect(output).toContain("【来源】shanghanlun.md > 桂枝汤 | 伤寒论");
     expect(output).toContain("【来源】zhongyi_xin.md > 不寐 | 中医临床");
-    expect(output).toContain("[1] ");
-    expect(output).toContain("[2] ");
+    expect(output).toContain("[ref:");
+    expect(output.match(/\[ref:/g)).toHaveLength(2);
     expect(output).toContain("桂枝汤方：桂枝三两");
   });
 
@@ -65,7 +65,7 @@ describe("search_knowledge_base", () => {
 
     const output = await searchKnowledgeBaseTool.invoke({ query: "长文" });
 
-    expect(output.length).toBeLessThan(850);
+    expect(output.length).toBeLessThan(1000);
     expect(output).not.toContain("长".repeat(1200));
   });
 

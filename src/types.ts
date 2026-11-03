@@ -19,6 +19,23 @@ export interface KnowledgeMetadata {
 /** 带元数据的知识文档 */
 export type KnowledgeDocument = DocumentInterface<KnowledgeMetadata>;
 
+/** 检索结果(附带相似度分数;FTS 命中可能没有分数) */
+export type RetrievedDocument = KnowledgeDocument & { score?: number };
+
+/** 引用条目:refId 是稳定标识,由 source + 标题 + 内容哈希生成 */
+export interface Citation {
+  refId: string;
+  source: string;
+  h1?: string;
+  h2?: string;
+  h3?: string;
+  lineRange?: string;
+  domain: string;
+  snippet: string;
+  /** 0–1,仅向量检索有 */
+  score?: number;
+}
+
 /** Agent 分析结果 */
 export interface AnalysisResult {
   /** 分析结论 */
@@ -30,6 +47,8 @@ export interface AnalysisResult {
     source: string;
     content: string;
     domain: string;
+    /** 命中检索集合时的稳定引用 id */
+    refId?: string;
   }>;
   /** 置信度 0-1 */
   confidence: number;
@@ -54,6 +73,10 @@ export interface QueryResult {
   response: string;
   queryType: QueryType;
   docCount: number;
+  /** 本次回答实际可用的引用(唯一文档) */
+  citations?: Citation[];
+  /** 模型输出但未命中检索集合的引用 id(用于审计) */
+  invalidRefIds?: string[];
 }
 
 /** 流式查询块 */
@@ -79,12 +102,13 @@ export interface QueryResponse {
   queryType: QueryType;
   docCount: number;
   elapsed: number;
+  citations: Citation[];
 }
 
 export interface DeepAnalysisResponse {
   conclusion: string;
   reasoning: string;
-  references: Array<{ source: string; content: string; domain: string }>;
+  references: Array<{ source: string; content: string; domain: string; refId?: string }>;
   confidence: number;
   suggestions?: string[];
   elapsed: number;
@@ -120,6 +144,7 @@ export interface StatusResponse {
     chroma: { ok: boolean; error?: string };
     embedding: { ok: boolean; provider: string; model: string };
     llm: { ok: boolean };
+    manifest: { ok: boolean; error?: string };
   };
   /** 当前索引信息 */
   index?: {
