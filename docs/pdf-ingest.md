@@ -54,19 +54,36 @@ headingPattern: '^(辨(太阳|阳明|少阳|太阴|少阴|厥阴).{0,30}病脉�
 ## 当前状态（2026-11-03）
 
 - 台账：40 本（`0611` 倪海厦系列 = core，`0612` 传统典籍 = reference）
-- 文字层可用：12/40（core 10 + reference 2），已产出 279 个章节、约 6.9MB Markdown
-- 需 OCR：28/40（core 1 = `倪海厦天纪系列之天机道`；reference 27，多为扫描版）
-- 逐本报告：`corpus/qa/*.md`；OCR 页码：`corpus/ocr-needed/*.txt`
-- **尚未 ingest**：ChromaDB 未运行，向量索引/FTS 需在启动 Chroma 后执行 `npm run ingest`
+- 文字层可用：13/40（core 11 本全部可用，含 OCR 后的《天机道》；reference 2 本）
+- 需 OCR：27 本（均在 reference，多为扫描版）
+- 已产出：约 6.9MB、280+ 章节 Markdown；逐本报告 `corpus/qa/*.md`
+- 索引：已 ingest 4086 个知识块（含摘要层 + 全文层），FTS5 同量
+- 检索基线：`npm run eval` → recall@5 100%（16 条种子题）、无答案准确率 100%
 
-## OCR（未实现）
+## OCR（macOS PDFKit + RapidOCR）
 
-当前只检测、不识别。可选方案：
+无需 tesseract/poppler：
 
-- `ocrmypdf + tesseract(chi_sim)`：先给 PDF 加文字层，再跑本管线
-- PaddleOCR：按页识别后写入 `corpus/<bookId>/`
+```bash
+# 1. 安装 Python 依赖(若证书报错,加 --trusted-host pypi.org --trusted-host files.pythonhosted.org)
+npm run ocr:setup
 
-OCR 后重跑 `npm run pdf2md -- --book <id>` 即可。扫描件不会被伪造为正文。
+# 2. 编译 Swift 渲染器(首次会自动编译;也可手动)
+npm run ocr:build
+
+# 3. 对无文字层书目批量 OCR
+npm run pdf:ocr -- --scope core
+# 或单本
+npm run pdf2md -- --ocr <bookId>
+```
+
+实现：
+- 渲染:PDFKit 逐页转 PNG(默认 1800px 宽)
+- 识别:RapidOCR;竖排文本按列重排(右列优先,同列自上而下)
+- 断点续跑:`corpus/ocr/<bookId>/page-XXXX.txt`
+- 依赖:Xcode Command Line Tools + Python 3.11
+
+扫描件不会被伪造为正文;OCR 后 QA 覆盖率 < 98% 仍会标记未通过。
 
 ## 入库
 

@@ -17,3 +17,6 @@
 /lee.pub
 /corpus/*/
 !/corpus/config/
+
+# OCR compiled binary
+/tools/ocr/ocr

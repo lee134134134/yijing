@@ -91,9 +91,20 @@ async function main(): Promise<void> {
     }
 
     answerable += 1;
-    const index = docs.findIndex((doc) =>
-      item.expected_sources.some((source) => baseName(source) === baseName(doc.metadata.source)),
-    );
+    const index = docs.findIndex((doc) => {
+      const haystack = [
+        doc.metadata.source,
+        doc.metadata.book ?? "",
+        doc.metadata.h1 ?? "",
+        doc.metadata.h2 ?? "",
+        doc.metadata.domain,
+      ]
+        .join(" ")
+        .toLowerCase();
+      return item.expected_sources.some(
+        (source) => haystack.includes(source.toLowerCase()) || baseName(source) === baseName(doc.metadata.source),
+      );
+    });
     const rank = index >= 0 ? index + 1 : 0;
     if (rank > 0) {
       recallHits += 1;

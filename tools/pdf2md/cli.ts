@@ -23,6 +23,7 @@ import { emitBook } from "./emit.js";
 import { extractPdf } from "./extract.js";
 import { readInventory, scanPdfInventory, writeInventory } from "./inventory.js";
 import { normalizeText, stripRunningHeaders } from "./normalize.js";
+import { runOcr } from "./ocr.js";
 import { writeQaReport } from "./qa.js";
 import { DEFAULT_HEADING_PATTERN, splitSections } from "./structure.js";
 
@@ -140,6 +141,46 @@ async function main(): Promise<void> {
   if (bookId) {
     const ok = await processBook(bookId);
     if (!ok) process.exitCode = 1;
+    return;
+  }
+
+  const ocrBookId = argValue("--ocr");
+  if (ocrBookId) {
+    const result = await runOcr(ocrBookId);
+    console.log(
+      `[${ocrBookId}] OCR 页 ${result.pages} / 章节 ${result.sections} / 字符 ${result.chars} / ` +
+        `文字层 ${(result.coverage * 100).toFixed(1)}% / QA ${result.ok ? "通过" : "未通过"}`,
+    );
+    if (!result.ok) process.exitCode = 1;
+    return;
+  }
+
+  if (hasFlag("--ocr-all")) {
+    const inventory = readInventory(MANIFEST);
+    const scope = argValue("--scope");
+    const limit = Number.parseInt(argValue("--limit") ?? "", 10);
+    const targets = inventory.books
+      .filter((book) => book.scope !== "exclude" && book.textLayer !== "yes")
+      .filter((book) => !scope || book.scope === scope)
+      .slice(0, Number.isFinite(limit) ? limit : undefined);
+
+    console.log(`OCR 目标: ${targets.length} 本`);
+    let failed = 0;
+    for (const book of targets) {
+      try {
+        const result = await runOcr(book.id);
+        console.log(
+          `[${book.id}] OCR 页 ${result.pages} / 章节 ${result.sections} / ` +
+            `文字层 ${(result.coverage * 100).toFixed(1)}% / QA ${result.ok ? "通过" : "未通过"}`,
+        );
+        if (!result.ok) failed += 1;
+      } catch (err) {
+        failed += 1;
+        console.error(`[${book.id}] OCR 失败:`, err instanceof Error ? err.message : err);
+      }
+    }
+    console.log(`\nOCR 完成 ${targets.length - failed}/${targets.length};失败 ${failed}。`);
+    if (failed > 0) process.exitCode = 1;
     return;
   }
 

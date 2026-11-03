@@ -72,5 +72,12 @@ describe("rag/chain", () => {
       expect(normalizeQueryType("tcm_diagnosisextra")).toBe("unknown");
       expect(normalizeQueryType("deep_analysis")).toBe("deep_analysis");
     });
+
+    it("兼容中文标签与标点", () => {
+      expect(normalizeQueryType("方剂药物")).toBe("tcm_prescription");
+      expect(normalizeQueryType("中医辨证。")).toBe("tcm_diagnosis");
+      expect(normalizeQueryType("命理八字")).toBe("bazi_analysis");
+      expect(normalizeQueryType("未分类")).toBe("unknown");
+    });
   });
 });

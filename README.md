@@ -189,6 +189,9 @@ npm run build:web   # 生产:web/dist 由 Fastify 托管到 /
 | `npm run eval` | 检索质量评测（recall@5 / MRR / 无答案准确率） |
 | `npm run pdf:inventory` | 扫描 pdf/ 生成 `corpus/manifest.yaml` |
 | `npm run pdf:build` | PDF → Markdown（全量；可加 `-- --scope core`） |
+| `npm run pdf:ocr` | 对无文字层 PDF 执行 OCR（macOS PDFKit + RapidOCR） |
+| `npm run ocr:setup` | 安装 Python OCR 依赖（rapidocr_onnxruntime） |
+| `npm run ocr:build` | 编译 Swift 渲染器 |
 | `/deep <问题>` | 深度分析（结构化 JSON 输出） |
 | `/history` | 查看对话历史 |
 | `/status` | 知识库状态 |

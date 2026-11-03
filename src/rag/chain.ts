@@ -44,7 +44,7 @@ const CLASSIFY_PROMPT = PromptTemplate.fromTemplate(`
 - general_knowledge: 一般知识问答、概念解释
 - unknown: 无法确定
 
-只返回类型名称，不要其他内容。
+只返回类型名称(英文标识符,如 tcm_prescription),不要翻译成中文,不要其他内容。
 
 用户问题: {question}
 `);
@@ -62,15 +62,39 @@ const QUERY_TYPES = new Set<string>([
   "unknown",
 ]);
 
+/** 中文标签 → 英文类型(小模型可能不遵循"只输出英文标识符") */
+const QUERY_TYPE_ALIASES: Record<string, QueryType> = {
+  中医辨证: "tcm_diagnosis",
+  中医诊断: "tcm_diagnosis",
+  方剂药物: "tcm_prescription",
+  方剂: "tcm_prescription",
+  命理八字: "bazi_analysis",
+  八字: "bazi_analysis",
+  面相分析: "mianxiang_analysis",
+  面相: "mianxiang_analysis",
+  易经占卜: "yijing_divination",
+  易经: "yijing_divination",
+  养生功法: "health_advice",
+  养生: "health_advice",
+  知识问答: "general_knowledge",
+  一般知识问答: "general_knowledge",
+  深度分析: "deep_analysis",
+  未分类: "unknown",
+};
+
 /**
  * 将 LLM 原始输出规整为合法 QueryType
  *
- * 白名单外一律归一为 "unknown":模型可能返回杂值/句子,
+ * 白名单外一律归一为 "unknown":模型可能返回杂值/句子/中文标签,
  * 直接 as QueryType 会让脏值流入 API 响应与前端标签映射。
  */
 export function normalizeQueryType(raw: string): QueryType {
-  const cleaned = raw.trim().toLowerCase();
-  return QUERY_TYPES.has(cleaned) ? (cleaned as QueryType) : "unknown";
+  const cleaned = raw
+    .trim()
+    .replace(/[\s"'`。.!！?？:：,，、]/g, "")
+    .toLowerCase();
+  if (QUERY_TYPES.has(cleaned)) return cleaned as QueryType;
+  return QUERY_TYPE_ALIASES[cleaned] ?? "unknown";
 }
 
 /**

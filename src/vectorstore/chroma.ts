@@ -123,16 +123,29 @@ async function getCollection(
       name: collectionName,
       // 统一使用 cosine:相似度阈值(1 - distance)才有明确语义
       configuration: { hnsw: { space: "cosine" } },
+      // 我们始终传预计算 embedding,禁用默认 EF(否则会要求 @chroma-core/default-embed)
+      embeddingFunction: null,
     });
     _collectionName = collectionName;
     return _collection;
   }
 
   try {
-    _collection = await client.getCollection({ name: collectionName });
+    // getCollection 的类型不接受 embeddingFunction:null(运行时会回退默认 EF),
+    // 这里先确认存在,再用 getOrCreate 拿句柄并显式禁用默认 EF,避免误建空集合。
+    const collections = await client.listCollections();
+    if (!collections.some((collection) => collection.name === collectionName)) {
+      throw new VectorStoreError(`知识库集合 "${collectionName}" 不存在，请先运行 npm run ingest 构建索引`);
+    }
+    _collection = await client.getOrCreateCollection({
+      name: collectionName,
+      configuration: { hnsw: { space: "cosine" } },
+      embeddingFunction: null,
+    });
     _collectionName = collectionName;
     return _collection;
   } catch (err) {
+    if (err instanceof VectorStoreError) throw err;
     throw new VectorStoreError(`知识库集合 "${collectionName}" 不存在，请先运行 npm run ingest 构建索引`, {
       cause: err,
     });
@@ -222,7 +235,8 @@ export async function searchKnowledge(
     const dense = await denseSearch(query, candidateK, config.minScore);
 
     let docs: RetrievedDocument[] = dense.slice(0, topK);
-    if (config.enableHybrid) {
+    // 混合检索闸门:dense 完全无命中时不启用 FTS,避免通用词 bigram 造成假阳性
+    if (config.enableHybrid && dense.length > 0) {
       let lexical: RetrievedDocument[] = [];
       try {
         lexical = await searchFts(query, candidateK);

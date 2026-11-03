@@ -57,7 +57,7 @@ books:
     title: 倪海厦天纪系列之天机道
     pdf: pdf/0611/倪海厦天纪系列之天机道.pdf
     scope: core
-    textLayer: no
+    textLayer: yes
     pages: 82
     duplicateOf: null
   - id: 倪海厦文集及医桉最新版-18e9e2

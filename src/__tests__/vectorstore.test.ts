@@ -85,7 +85,7 @@ describe("vectorstore/chroma 检索缓存", () => {
     h.client.getOrCreateCollection.mockResolvedValue(h.collection);
     h.client.getCollection.mockResolvedValue(h.collection);
     h.client.deleteCollection.mockResolvedValue(undefined);
-    h.client.listCollections.mockResolvedValue([]);
+    h.client.listCollections.mockResolvedValue([{ name: "test_collection" }]);
     h.client.heartbeat.mockResolvedValue({});
     h.collection.query.mockResolvedValue(mockChromaResult());
     h.collection.add.mockResolvedValue(undefined);
