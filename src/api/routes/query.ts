@@ -1,23 +1,42 @@
 /**
- * POST /api/query — 普通查询（支持 SSE 流式输出）
+ * POST /api/query — 会话问答（支持 SSE v2）
+ *
+ * 流程:
+ * 1. 解析/创建会话,读取该会话最近 3 轮历史
+ * 2. 落库 user 消息
+ * 3. 调 agenticRag(带 AbortSignal / 检索预算)
+ * 4. 落库 assistant 消息(含 citations/耗时/降级)
+ * 5. 非流式返回 JSON;流式发送 meta → token* → citation* → done
+ *
+ * SSE v2 事件:
+ *   meta      { conversationId }
+ *   token     { text }
+ *   citation  Citation
+ *   done      { response, queryType, docCount, citations, elapsed, conversationId, messageId }
+ *   error     { code, message }
  */
 
 import type { FastifyInstance } from "fastify";
 import { agenticRag } from "../../agents/index.js";
+import { config } from "../../config.js";
+import type { Conversation } from "../../conversation/index.js";
+import {
+  addConversationMessage,
+  createConversation,
+  getConversation,
+  getHistoryForConversation,
+} from "../../conversation/index.js";
 import { ErrorCode, ValidationError, YijingError } from "../../errors.js";
 import { createLogger, createRequestContext, logRequestComplete } from "../../logger.js";
+import { queriesTotal, queryDuration, retrievalDocs } from "../../metrics.js";
 import type { QueryRequest, QueryResponse } from "../../types.js";
+import { assertStoreReady } from "../../vectorstore/chroma.js";
 import { registerErrorHandler } from "../error-handler.js";
 import { errorResponseSchema, queryBodySchema, queryResponseSchema } from "../schemas.js";
 
 const log = createLogger("api:routes:query");
 
-/**
- * SSE 心跳间隔(ms)
- *
- * deep agent 首 token 前有分类+多轮检索思考,长静默会被 nginx/ALB
- * 默认 60s 超时断开;注释帧 `:ping` 对 SSE 客户端透明,仅维持连接活跃。
- */
+/** SSE 心跳间隔(ms) */
 const SSE_HEARTBEAT_MS = 25_000;
 
 const QUERY_TYPES_LABEL: Record<string, string> = {
@@ -31,15 +50,30 @@ const QUERY_TYPES_LABEL: Record<string, string> = {
   unknown: "未分类",
 };
 
+/** 解析会话:给定 id 必须存在;否则按首问创建新会话 */
+function resolveConversation(conversationId: string | undefined, query: string): Conversation {
+  if (conversationId) {
+    const existing = getConversation(conversationId);
+    if (!existing) {
+      throw new YijingError(ErrorCode.NOT_FOUND, "Conversation not found", { statusCode: 404 });
+    }
+    return existing;
+  }
+  return createConversation(query.slice(0, 30));
+}
+
+/** 查询指标(降级 = 无可验证引用) */
+function recordQueryMetrics(citations: number, elapsed: number): void {
+  const degraded = citations === 0;
+  const labels = { degraded: String(degraded) };
+  queriesTotal.inc(labels);
+  queryDuration.observe(labels, elapsed);
+  retrievalDocs.observe(citations);
+}
+
 export async function queryRoutes(server: FastifyInstance) {
   registerErrorHandler(server);
 
-  /**
-   * POST /api/query
-   *
-   * 非流式：返回 { response, queryType, docCount, elapsed }
-   * 流式（stream=true）：SSE 流式返回文本块
-   */
   server.post<{ Body: QueryRequest }>(
     "/query",
     {
@@ -51,6 +85,7 @@ export async function queryRoutes(server: FastifyInstance) {
         response: {
           200: queryResponseSchema,
           400: errorResponseSchema,
+          404: errorResponseSchema,
           502: errorResponseSchema,
           503: errorResponseSchema,
         },
@@ -58,8 +93,7 @@ export async function queryRoutes(server: FastifyInstance) {
     },
     async (req, reply) => {
       const rc = createRequestContext("POST", "/api/query");
-
-      const { query, stream = false } = req.body || {};
+      const { query, stream = false, conversationId: requestedId } = req.body || {};
 
       if (!query || typeof query !== "string" || query.trim().length === 0) {
         log.warn({ requestId: rc.requestId }, "Empty query received");
@@ -69,9 +103,41 @@ export async function queryRoutes(server: FastifyInstance) {
 
       const trimmed = query.trim();
 
-      // ── 流式模式：SSE（真流式，逐 chunk 推送） ──
+      // 先确认知识库可用,避免 503 时仍把用户问题写入历史
+      try {
+        await assertStoreReady();
+      } catch (err) {
+        if (err instanceof YijingError) {
+          return reply.status(err.statusCode).send(err.toJSON());
+        }
+        throw err;
+      }
+
+      let conversation: Conversation;
+      try {
+        conversation = resolveConversation(requestedId, trimmed);
+      } catch (err) {
+        if (err instanceof YijingError) {
+          return reply.status(err.statusCode).send(err.toJSON());
+        }
+        throw err;
+      }
+
+      const conversationId = conversation.id;
+      const history = getHistoryForConversation(conversationId, 3);
+      addConversationMessage(conversationId, { role: "user", content: trimmed });
+
+      // 取消 / 超时:客户端断开或超过 REQUEST_TIMEOUT_MS 都 abort agent 运行
+      const controller = new AbortController();
+      let timedOut = false;
+      const timer = setTimeout(() => {
+        timedOut = true;
+        controller.abort(new Error("request timeout"));
+      }, config.requestTimeoutMs);
+      timer.unref();
+
+      // ── 流式模式 ──
       if (stream) {
-        // 必须 hijack，否则 Fastify 在 handler return 后可能再次发送响应头
         reply.hijack();
         reply.raw.writeHead(200, {
           "Content-Type": "text/event-stream",
@@ -80,14 +146,20 @@ export async function queryRoutes(server: FastifyInstance) {
           "X-Accel-Buffering": "no",
         });
 
-        // 客户端断连后停止写入(deepagents 无 AbortSignal 支持,已发出的
-        // agent 运行无法中止——已知限制,但至少不向死连接写数据)
         let clientGone = false;
         reply.raw.on("close", () => {
           clientGone = true;
+          controller.abort(new Error("client closed"));
         });
 
-        // SSE 心跳:agent 长思考期间保活,防代理 60s 静默断连
+        let seq = 0;
+        const writeEvent = (event: string, data: unknown): void => {
+          if (clientGone || reply.raw.writableEnded || reply.raw.destroyed) return;
+          reply.raw.write(`id: ${++seq}\nevent: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+        };
+
+        writeEvent("meta", { conversationId });
+
         const heartbeat = setInterval(() => {
           if (!clientGone && !reply.raw.writableEnded && !reply.raw.destroyed) {
             reply.raw.write(":ping\n\n");
@@ -96,57 +168,58 @@ export async function queryRoutes(server: FastifyInstance) {
 
         try {
           const startTime = Date.now();
-          const result = await agenticRag(trimmed, undefined, (chunk) => {
-            if (clientGone) return;
-            const textData = JSON.stringify({ type: "text", data: chunk });
-            reply.raw.write(`event: message\ndata: ${textData}\n\n`);
+          const result = await agenticRag(trimmed, history, (chunk) => writeEvent("token", { text: chunk }), {
+            signal: controller.signal,
+            maxToolCalls: config.maxToolCalls,
+          });
+          const elapsed = (Date.now() - startTime) / 1000;
+          recordQueryMetrics(result.citations?.length ?? 0, elapsed);
+
+          const assistant = addConversationMessage(conversationId, {
+            role: "assistant",
+            content: result.response,
+            queryType: result.queryType,
+            docCount: result.docCount,
+            citations: result.citations,
+            degraded: (result.citations?.length ?? 0) === 0,
+            model: config.llmModel,
+            latencyMs: Math.round(elapsed * 1000),
           });
 
-          const elapsed = (Date.now() - startTime) / 1000;
-          const label = QUERY_TYPES_LABEL[result.queryType] || "知识问答";
-          const citations = result.citations ?? [];
-
-          if (!clientGone) {
-            // 逐条引用事件(前端可直接渲染来源卡片)
-            for (const citation of citations) {
-              reply.raw.write(`event: citation\ndata: ${JSON.stringify(citation)}\n\n`);
-            }
-
-            // meta event（流结束后发送，内容已包含脚注）
-            const meta = JSON.stringify({
-              type: "meta",
-              queryType: result.queryType,
-              docCount: result.docCount,
-              label,
-            });
-            reply.raw.write(`event: meta\ndata: ${meta}\n\n`);
-
-            // done event
-            const doneData = JSON.stringify({
-              type: "done",
-              data: {
-                response: result.response,
-                queryType: result.queryType,
-                docCount: result.docCount,
-                citations,
-                elapsed,
-              },
-            });
-            reply.raw.write(`event: done\ndata: ${doneData}\n\n`);
-            reply.raw.end();
+          for (const citation of result.citations ?? []) {
+            writeEvent("citation", citation);
           }
 
-          logRequestComplete(rc, 200, { queryType: result.queryType, docCount: result.docCount, elapsed });
+          writeEvent("done", {
+            response: result.response,
+            queryType: result.queryType,
+            docCount: result.docCount,
+            citations: result.citations ?? [],
+            elapsed,
+            conversationId,
+            messageId: assistant.id,
+            label: QUERY_TYPES_LABEL[result.queryType] ?? "知识问答",
+          });
+
+          if (!clientGone) reply.raw.end();
+          logRequestComplete(rc, 200, {
+            conversationId,
+            queryType: result.queryType,
+            docCount: result.docCount,
+            elapsed,
+          });
         } catch (err) {
-          const message = err instanceof YijingError ? err.message : "Streaming query failed";
-          const code = err instanceof YijingError ? err.code : ErrorCode.INTERNAL;
-          if (!clientGone) {
-            const errData = JSON.stringify({ type: "error", data: { error: message, code } });
-            reply.raw.write(`event: error\ndata: ${errData}\n\n`);
-            reply.raw.end();
-          }
-          log.error({ err, requestId: rc.requestId }, "Streaming query failed");
+          const code = timedOut ? ErrorCode.LLM_TIMEOUT : err instanceof YijingError ? err.code : ErrorCode.INTERNAL;
+          const message = timedOut
+            ? "请求超时，请缩小问题范围或稍后重试"
+            : err instanceof YijingError
+              ? err.message
+              : "Streaming query failed";
+          writeEvent("error", { code, message });
+          if (!clientGone) reply.raw.end();
+          log.error({ err, conversationId, timedOut }, "Streaming query failed");
         } finally {
+          clearTimeout(timer);
           clearInterval(heartbeat);
         }
         return;
@@ -155,8 +228,23 @@ export async function queryRoutes(server: FastifyInstance) {
       // ── 非流式模式 ──
       try {
         const startTime = Date.now();
-        const result = await agenticRag(trimmed);
+        const result = await agenticRag(trimmed, history, undefined, {
+          signal: controller.signal,
+          maxToolCalls: config.maxToolCalls,
+        });
         const elapsed = (Date.now() - startTime) / 1000;
+        recordQueryMetrics(result.citations?.length ?? 0, elapsed);
+
+        const assistant = addConversationMessage(conversationId, {
+          role: "assistant",
+          content: result.response,
+          queryType: result.queryType,
+          docCount: result.docCount,
+          citations: result.citations,
+          degraded: (result.citations?.length ?? 0) === 0,
+          model: config.llmModel,
+          latencyMs: Math.round(elapsed * 1000),
+        });
 
         const response: QueryResponse = {
           response: result.response,
@@ -164,16 +252,32 @@ export async function queryRoutes(server: FastifyInstance) {
           docCount: result.docCount,
           elapsed,
           citations: result.citations ?? [],
+          conversationId,
+          messageId: assistant.id,
         };
 
-        logRequestComplete(rc, 200, { queryType: result.queryType, docCount: result.docCount, elapsed });
+        logRequestComplete(rc, 200, {
+          conversationId,
+          queryType: result.queryType,
+          docCount: result.docCount,
+          elapsed,
+        });
         return reply.send(response);
       } catch (err) {
-        log.error({ err, requestId: rc.requestId }, "Query failed");
+        if (timedOut) {
+          return reply.status(504).send(
+            new YijingError(ErrorCode.LLM_TIMEOUT, "请求超时，请缩小问题范围或稍后重试", {
+              statusCode: 504,
+            }).toJSON(),
+          );
+        }
+        log.error({ err, conversationId }, "Query failed");
         if (err instanceof YijingError) {
           return reply.status(err.statusCode).send(err.toJSON());
         }
         return reply.status(500).send(new YijingError(ErrorCode.INTERNAL, "Query failed").toJSON());
+      } finally {
+        clearTimeout(timer);
       }
     },
   );

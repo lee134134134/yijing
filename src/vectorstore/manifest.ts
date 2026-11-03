@@ -20,7 +20,10 @@ const log = createLogger("vectorstore:manifest");
 
 export interface IndexManifest {
   version: 1;
+  /** 实际生效的集合名(可带版本后缀) */
   collection: string;
+  /** 基础集合名(对应 CHROMA_COLLECTION_NAME),用于配置一致性校验 */
+  baseCollection?: string;
   embeddingProvider: "local" | "api";
   embeddingModel: string;
   embeddingDimension: number;
@@ -43,6 +46,31 @@ const MANIFEST_FILE = "index-manifest.json";
 /** 清单路径(运行时解析,避免测试/未配置 dataDir 时在模块加载阶段抛错) */
 function manifestPath(): string {
   return path.join(config.dataDir ?? "./data", MANIFEST_FILE);
+}
+
+/** 5s 清单缓存:每个请求都要解析 active collection,避免频繁读盘 */
+const MANIFEST_CACHE_TTL_MS = 5_000;
+let manifestCache: { at: number; value: IndexManifest | null } | null = null;
+
+/** 读取清单(5s 缓存) */
+export function readManifestCached(): IndexManifest | null {
+  const now = Date.now();
+  if (manifestCache && now - manifestCache.at < MANIFEST_CACHE_TTL_MS) {
+    return manifestCache.value;
+  }
+  const value = readManifest();
+  manifestCache = { at: now, value };
+  return value;
+}
+
+/** 当前生效的集合名:清单优先,否则回退配置的基础名 */
+export function activeCollectionName(): string {
+  return readManifestCached()?.collection ?? config.chromaCollectionName;
+}
+
+/** 清除清单缓存(写入/删除后调用) */
+export function clearManifestCache(): void {
+  manifestCache = null;
 }
 
 /** 读取清单;不存在或损坏返回 null */
@@ -74,8 +102,17 @@ export function writeManifest(input: Omit<IndexManifest, "version" | "builtAt"> 
   const tmp = `${file}.tmp`;
   fs.writeFileSync(tmp, `${JSON.stringify(manifest, null, 2)}\n`, "utf-8");
   fs.renameSync(tmp, file);
-  log.info({ path: file, chunkCount: manifest.chunkCount }, "Index manifest written");
+  clearManifestCache();
+  log.info({ path: file, chunkCount: manifest.chunkCount, collection: manifest.collection }, "Index manifest written");
   return manifest;
+}
+
+/** 删除清单(手动清空索引时) */
+export function deleteManifest(): void {
+  const file = manifestPath();
+  if (fs.existsSync(file)) fs.rmSync(file, { force: true });
+  clearManifestCache();
+  log.info({ path: file }, "Index manifest removed");
 }
 
 /** 语料内容哈希(与文件顺序无关) */
@@ -104,8 +141,9 @@ export function checkManifest(): ManifestCheck {
   }
 
   const mismatches: string[] = [];
-  if (manifest.collection !== config.chromaCollectionName) {
-    mismatches.push(`集合 ${manifest.collection} ≠ ${config.chromaCollectionName}`);
+  const baseCollection = manifest.baseCollection ?? manifest.collection;
+  if (baseCollection !== config.chromaCollectionName) {
+    mismatches.push(`集合 ${baseCollection} ≠ ${config.chromaCollectionName}`);
   }
   if (manifest.embeddingProvider !== config.embeddingProvider) {
     mismatches.push(`embedding provider ${manifest.embeddingProvider} ≠ ${config.embeddingProvider}`);

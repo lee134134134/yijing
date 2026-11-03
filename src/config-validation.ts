@@ -141,6 +141,12 @@ export function validateConfig(): ValidationResult {
   if (config.deepAgentMaxIterations < 1 || config.deepAgentMaxIterations > 100) {
     errors.push(`DEEP_AGENT_MAX_ITERATIONS (${config.deepAgentMaxIterations}) must be between 1 and 100`);
   }
+  if (config.requestTimeoutMs < 1000 || config.requestTimeoutMs > 600_000) {
+    errors.push(`REQUEST_TIMEOUT_MS (${config.requestTimeoutMs}) must be between 1000 and 600000`);
+  }
+  if (config.maxToolCalls < 1 || config.maxToolCalls > 20) {
+    errors.push(`MAX_TOOL_CALLS (${config.maxToolCalls}) must be between 1 and 20`);
+  }
 
   return {
     valid: errors.length === 0,

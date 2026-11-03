@@ -9,24 +9,6 @@ import { createLogger } from "../../logger.js";
 
 const log = createLogger("api:middleware:security");
 
-/** 危险字符模式（防止注入攻击） */
-const INJECTION_PATTERNS = [
-  /(\bunion\b.*\bselect\b)/i,
-  /(\bselect\b.*\bfrom\b)/i,
-  /(\bdrop\b.*\btable\b)/i,
-  /(<script[^>]*>.*<\/script>)/i,
-];
-
-/**
- * 检测潜在注入攻击
- */
-export function detectInjection(input: string): boolean {
-  return INJECTION_PATTERNS.some((pattern) => pattern.test(input));
-}
-
-/**
- * 清理用户输入中的潜在危险内容
- */
 export function sanitizeInput(input: string): string {
   let cleaned = input.trim();
   cleaned = cleaned.replace(/<script[^>]*>.*?<\/script>/gi, "");

@@ -22,7 +22,7 @@ import { createLogger } from "../logger.js";
 import type { KnowledgeDocument, KnowledgeMetadata, RetrievedDocument } from "../types.js";
 import { getEmbeddings } from "./embeddings.js";
 import { clearFts, searchFts } from "./fts.js";
-import { checkManifest } from "./manifest.js";
+import { activeCollectionName, checkManifest, deleteManifest } from "./manifest.js";
 
 const log = createLogger("vectorstore:chroma");
 
@@ -65,6 +65,7 @@ type WhereFilter = Where;
 
 let _client: ChromaClient | null = null;
 let _collection: Collection | null = null;
+let _collectionName: string | null = null;
 
 /** 就绪检查缓存:避免每个请求都打 3 次 Chroma(5s 内复用) */
 const HEALTH_TTL_MS = 5_000;
@@ -79,11 +80,12 @@ function invalidateHealthCache(): void {
 }
 
 /** ChromaDB metadata 仅支持标量类型 */
-function toScalarMetadata(meta: KnowledgeMetadata): Record<string, string> {
-  return Object.fromEntries(Object.entries(meta).filter(([, v]) => v !== undefined && v !== null)) as Record<
-    string,
-    string
-  >;
+function toScalarMetadata(meta: KnowledgeMetadata): Record<string, string | number> {
+  return Object.fromEntries(
+    Object.entries(meta).filter(
+      ([, v]) => v !== undefined && v !== null && (typeof v === "string" || typeof v === "number"),
+    ),
+  ) as Record<string, string | number>;
 }
 
 /**
@@ -105,27 +107,33 @@ function getClient(): ChromaClient {
 /**
  * 获取集合
  *
- * - create=true:写入路径,不存在则创建
- * - create=false:读取路径,不存在直接抛错,避免"自动建空集合 → 永远查不到"
+ * - create=true:写入路径,不存在则创建(cosine)
+ * - create=false:读取路径,不存在直接抛错
+ * - collectionName 默认取清单里的 active collection,支持 ingest 构建新版本
  */
-async function getCollection(create: boolean = true): Promise<Collection> {
-  if (_collection) return _collection;
+async function getCollection(
+  create: boolean = true,
+  collectionName: string = activeCollectionName(),
+): Promise<Collection> {
+  if (_collection && _collectionName === collectionName) return _collection;
 
   const client = getClient();
   if (create) {
     _collection = await client.getOrCreateCollection({
-      name: config.chromaCollectionName,
+      name: collectionName,
       // 统一使用 cosine:相似度阈值(1 - distance)才有明确语义
       configuration: { hnsw: { space: "cosine" } },
     });
+    _collectionName = collectionName;
     return _collection;
   }
 
   try {
-    _collection = await client.getCollection({ name: config.chromaCollectionName });
+    _collection = await client.getCollection({ name: collectionName });
+    _collectionName = collectionName;
     return _collection;
   } catch (err) {
-    throw new VectorStoreError(`知识库集合 "${config.chromaCollectionName}" 不存在，请先运行 npm run ingest 构建索引`, {
+    throw new VectorStoreError(`知识库集合 "${collectionName}" 不存在，请先运行 npm run ingest 构建索引`, {
       cause: err,
     });
   }
@@ -152,6 +160,12 @@ function parseQueryResult(result: Awaited<ReturnType<Collection["query"]>>): Ret
         h2: meta.h2 ? String(meta.h2) : undefined,
         h3: meta.h3 ? String(meta.h3) : undefined,
         lineRange: meta.lineRange ? String(meta.lineRange) : undefined,
+        book: meta.book ? String(meta.book) : undefined,
+        chapter: meta.chapter ? String(meta.chapter) : undefined,
+        sectionPath: meta.sectionPath ? String(meta.sectionPath) : undefined,
+        pageStart: typeof meta.pageStart === "number" ? meta.pageStart : undefined,
+        pageEnd: typeof meta.pageEnd === "number" ? meta.pageEnd : undefined,
+        layer: meta.layer === "curated" || meta.layer === "fulltext" ? meta.layer : undefined,
       },
     }) as RetrievedDocument;
 
@@ -194,7 +208,7 @@ export async function searchKnowledge(
   query: string,
   topK: number = config.retrievalTopK,
 ): Promise<RetrievedDocument[]> {
-  const cacheKey = `${searchCacheKey(query, topK)}:${config.minScore}:${config.enableHybrid ? "hybrid" : "dense"}`;
+  const cacheKey = `${searchCacheKey(query, topK)}:${activeCollectionName()}:${config.minScore}:${config.enableHybrid ? "hybrid" : "dense"}`;
   const cached = searchCache.get(cacheKey);
   if (cached) {
     // LRU:命中后刷新位置
@@ -340,13 +354,18 @@ export async function multiQuerySearch(
 /**
  * 批量添加文档(由 ingestion 使用)
  *
- * 每批次写入后记录进度。使用本地 Embedding 生成向量后直连 ChromaDB 写入。
+ * targetCollection 允许写入一个新版本集合(非破坏性 ingest):
+ * 写入校验通过后再由 manifest 切换 active collection。
  */
-export async function addDocumentsBatched(docs: KnowledgeDocument[], batchSize: number = 50): Promise<number> {
+export async function addDocumentsBatched(
+  docs: KnowledgeDocument[],
+  batchSize: number = 50,
+  targetCollection: string = activeCollectionName(),
+): Promise<number> {
   if (docs.length === 0) return 0;
 
   try {
-    const collection = await getCollection();
+    const collection = await getCollection(true, targetCollection);
     let total = 0;
     for (let i = 0; i < docs.length; i += batchSize) {
       const batch = docs.slice(i, i + batchSize);
@@ -359,14 +378,19 @@ export async function addDocumentsBatched(docs: KnowledgeDocument[], batchSize: 
         metadatas: batch.map((d) => toScalarMetadata(d.metadata)),
       });
       total += batch.length;
-      log.info({ progress: `${total}/${docs.length}` }, "Batch written");
+      log.info({ progress: `${total}/${docs.length}`, collection: targetCollection }, "Batch written");
     }
     // 知识库内容变更,失效检索缓存与健康缓存
     invalidateSearchCache();
     invalidateHealthCache();
+    // 写入的不是当前 active 集合时,不要把单例指向构建中的集合
+    if (targetCollection !== activeCollectionName()) {
+      _collection = null;
+      _collectionName = null;
+    }
     return total;
   } catch (err) {
-    log.error({ err }, "Failed to add documents");
+    log.error({ err, collection: targetCollection }, "Failed to add documents");
     if (err instanceof StoreError) throw err;
     throw new StoreError("批量写入文档失败", { cause: err });
   }
@@ -386,12 +410,12 @@ export async function addDocuments(docs: KnowledgeDocument[]): Promise<number> {
 /**
  * 获取文档总数
  */
-export async function getDocumentCount(): Promise<number> {
+export async function getDocumentCount(collectionName: string = activeCollectionName()): Promise<number> {
   try {
-    const collection = await getCollection(false);
+    const collection = await getCollection(false, collectionName);
     return await collection.count();
   } catch (err) {
-    log.error({ err }, "Failed to get document count");
+    log.error({ err, collectionName }, "Failed to get document count");
     if (err instanceof VectorStoreError) throw err;
     throw new VectorStoreError("读取知识库文档数失败", { cause: err });
   }
@@ -415,6 +439,8 @@ export async function listCollections(): Promise<string[]> {
 /** 知识库健康状态(不抛错,供 /status 与 /ready 使用) */
 export interface StoreHealth {
   ok: boolean;
+  /** 当前 active 集合名(可能带版本后缀) */
+  collectionName: string;
   /** ChromaDB 服务是否可达 */
   chroma: boolean;
   /** 目标集合是否存在 */
@@ -437,12 +463,14 @@ export interface StoreHealth {
 export async function getStoreHealth(): Promise<StoreHealth> {
   const manifest = checkManifest();
   const manifestCheck = { ok: manifest.ok, ...(manifest.error ? { error: manifest.error } : {}) };
+  const active = activeCollectionName();
 
   try {
     await getClient().heartbeat();
   } catch (err) {
     return {
       ok: false,
+      collectionName: active,
       chroma: false,
       collection: false,
       docCount: 0,
@@ -456,11 +484,11 @@ export async function getStoreHealth(): Promise<StoreHealth> {
   try {
     const collections = await getClient().listCollections();
     const names = collections.map((c) => c.name);
-    const exists = names.includes(config.chromaCollectionName);
-    const docCount = exists ? await getDocumentCount() : 0;
+    const exists = names.includes(active);
+    const docCount = exists ? await getDocumentCount(active) : 0;
 
     const error = !exists
-      ? `集合 "${config.chromaCollectionName}" 不存在，请运行 npm run ingest`
+      ? `集合 "${active}" 不存在，请运行 npm run ingest`
       : docCount === 0
         ? "知识库为空，请运行 npm run ingest 构建索引"
         : !manifest.ok
@@ -469,6 +497,7 @@ export async function getStoreHealth(): Promise<StoreHealth> {
 
     return {
       ok: exists && docCount > 0 && manifest.ok,
+      collectionName: active,
       chroma: true,
       collection: exists,
       docCount,
@@ -479,6 +508,7 @@ export async function getStoreHealth(): Promise<StoreHealth> {
   } catch (err) {
     return {
       ok: false,
+      collectionName: active,
       chroma: true,
       collection: false,
       docCount: 0,
@@ -512,18 +542,33 @@ export async function assertStoreReady(): Promise<void> {
 }
 
 /**
- * 清空集合
+ * 删除指定集合(ingest 切换后清理旧版本)
+ */
+export async function deleteCollectionByName(name: string): Promise<void> {
+  await getClient().deleteCollection({ name });
+  if (_collectionName === name) {
+    _collection = null;
+    _collectionName = null;
+  }
+  invalidateSearchCache();
+  invalidateHealthCache();
+  log.info({ collection: name }, "Collection deleted");
+}
+
+/**
+ * 清空当前 active 集合与清单
  *
- * 删除集合(及其中所有文档和向量)。
+ * 手动重置用;ingest 已改为"写新集合 → 切清单",不再调用这里。
  */
 export async function clearAll(): Promise<void> {
   try {
-    await getClient().deleteCollection({ name: config.chromaCollectionName });
-    _collection = null;
+    const active = activeCollectionName();
+    await deleteCollectionByName(active);
+    deleteManifest();
     await clearFts();
-    invalidateSearchCache();
-    invalidateHealthCache();
-    log.info("Collection deleted");
+    _collection = null;
+    _collectionName = null;
+    log.info({ collection: active }, "Collection cleared");
   } catch (err) {
     log.error({ err }, "Failed to clear collection");
     if (err instanceof StoreError) throw err;
@@ -537,6 +582,7 @@ export async function clearAll(): Promise<void> {
 export function resetStore(): void {
   _client = null;
   _collection = null;
+  _collectionName = null;
   invalidateSearchCache();
   invalidateHealthCache();
 }

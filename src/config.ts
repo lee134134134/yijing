@@ -166,6 +166,10 @@ export const config = {
   deepAgentMaxIterations: parseInt(process.env.DEEP_AGENT_MAX_ITERATIONS || "25", 10),
   /** 是否启用 todoListMiddleware(任务规划中间件) */
   enableTodoPlanning: process.env.ENABLE_TODO_PLANNING !== "false",
+  /** 单次请求总超时(ms),到点 abort agent 运行 */
+  requestTimeoutMs: parseInt(process.env.REQUEST_TIMEOUT_MS || "120000", 10),
+  /** 单次请求最多检索调用次数(成本闸门) */
+  maxToolCalls: parseInt(process.env.MAX_TOOL_CALLS || "6", 10),
 
   // ── Embedding ──
   /**
@@ -201,7 +205,6 @@ export const config = {
   enableHybrid: process.env.ENABLE_HYBRID !== "false",
   /** FTS5 索引文件路径 */
   ftsDbPath: process.env.FTS_DB_PATH || path.resolve(projectRoot, "./data/fts.db"),
-  enableReranking: process.env.ENABLE_RERANKING === "true",
 
   // ── 查询重写 ──
   enableQueryRewrite: process.env.ENABLE_QUERY_REWRITE !== "false",
@@ -214,8 +217,12 @@ export const config = {
   chunkSize: parseInt(process.env.CHUNK_SIZE || "800", 10),
   chunkOverlap: parseInt(process.env.CHUNK_OVERLAP || "150", 10),
 
-  // ── 知识库 ──
+  /** 知识库目录 */
   knowledgeDir: path.resolve(projectRoot, process.env.KNOWLEDGE_DIR || "./memory"),
+  /** 全文语料目录(pdf2md 产出) */
+  corpusDir: path.resolve(projectRoot, process.env.CORPUS_DIR || "./corpus"),
+  /** 是否把私有资料(家谱等 PII)纳入索引;默认关闭 */
+  includePrivate: process.env.INCLUDE_PRIVATE === "true",
 
   // ── 对话 ──
   maxHistory: parseInt(process.env.MAX_HISTORY || "200", 10),

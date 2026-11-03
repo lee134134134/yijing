@@ -70,10 +70,17 @@ export function loadAllMarkdownFiles(): KnowledgeDocument[] {
   }
 
   const EXCLUDE = new Set(["README.md", "VERSION.md"]);
+  const PRIVATE = new Set(["jiapu.md"]);
 
   const files = fs
     .readdirSync(knowledgeDir)
     .filter((f) => f.endsWith(".md") && !EXCLUDE.has(f))
+    .filter((f) => {
+      if (!PRIVATE.has(f)) return true;
+      if (config.includePrivate) return true;
+      log.warn({ file: f }, "Skipping private knowledge file (set INCLUDE_PRIVATE=true to index)");
+      return false;
+    })
     .map((f) => path.join(knowledgeDir, f));
 
   log.info(`找到 ${files.length} 个 Markdown 文件:`);
@@ -243,6 +250,12 @@ export async function chunkDocuments(rawDocs: KnowledgeDocument[]): Promise<Know
       h2: meta.h2 as string | undefined,
       h3: meta.h3 as string | undefined,
       lineRange: meta.lineRange as string | undefined,
+      book: meta.book as string | undefined,
+      chapter: meta.chapter as string | undefined,
+      sectionPath: meta.sectionPath as string | undefined,
+      pageStart: typeof meta.pageStart === "number" ? meta.pageStart : undefined,
+      pageEnd: typeof meta.pageEnd === "number" ? meta.pageEnd : undefined,
+      layer: meta.layer === "curated" || meta.layer === "fulltext" ? meta.layer : undefined,
     };
     return new Document<KnowledgeMetadata>({
       pageContent: d.pageContent,

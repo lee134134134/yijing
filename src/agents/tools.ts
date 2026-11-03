@@ -87,6 +87,10 @@ async function retrieveKnowledge(query: string, topK: number): Promise<Retrieved
  */
 export const searchKnowledgeBaseTool = tool(
   async ({ query, topK }) => {
+    const budget = getCitationCollector();
+    if (budget && !budget.tryConsumeRetrieval()) {
+      return "本次检索次数已达上限，请基于已获得的资料回答，不要继续检索。";
+    }
     const docs = await retrieveKnowledge(query, topK ?? 5);
     return formatDocs(docs);
   },
@@ -107,6 +111,10 @@ export const searchKnowledgeBaseTool = tool(
  */
 export const searchByDomainTool = tool(
   async ({ domain, query, topK }) => {
+    const budget = getCitationCollector();
+    if (budget && !budget.tryConsumeRetrieval()) {
+      return "本次检索次数已达上限，请基于已获得的资料回答，不要继续检索。";
+    }
     const docs = await searchByDomain(query, domain, topK ?? 5);
     if (docs.length === 0) {
       return `领域 "${domain}" 中未找到相关内容。`;

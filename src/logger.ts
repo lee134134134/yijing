@@ -46,21 +46,31 @@ if (process.env.NODE_ENV !== "production" || process.stdout.isTTY) {
   });
 }
 
-// 文件输出（始终记录到文件）
+// 文件输出（按天/大小轮转,保留 7 份）
 if (config.logFile !== false) {
   ensureLogDir();
-  const logFile = path.join(LOG_DIR, "app.log");
   targets.push({
-    target: "pino/file",
-    options: { destination: logFile, mkdir: true },
+    target: "pino-roll",
+    options: {
+      file: path.join(LOG_DIR, "app.log"),
+      frequency: "daily",
+      size: "100m",
+      mkdir: true,
+      limit: { count: 7 },
+    },
     level: "trace",
   });
 
   // 独立的错误日志
-  const errLogFile = path.join(LOG_DIR, "error.log");
   targets.push({
-    target: "pino/file",
-    options: { destination: errLogFile, mkdir: true },
+    target: "pino-roll",
+    options: {
+      file: path.join(LOG_DIR, "error.log"),
+      frequency: "daily",
+      size: "50m",
+      mkdir: true,
+      limit: { count: 7 },
+    },
     level: "warn",
   });
 }

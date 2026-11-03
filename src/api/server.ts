@@ -6,15 +6,21 @@
  * 响应压缩 + OpenAPI 文档。
  */
 
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import compress from "@fastify/compress";
 import cors from "@fastify/cors";
+import fastifyStatic from "@fastify/static";
 import swagger from "@fastify/swagger";
 import swaggerUi from "@fastify/swagger-ui";
 import Fastify from "fastify";
 import { config } from "../config.js";
 import { assertConfig } from "../config-validation.js";
+import { ErrorCode, YijingError } from "../errors.js";
 import { getLlmStatus } from "../llm/factory.js";
 import { createLogger } from "../logger.js";
+import { httpRequestDuration, httpRequestsTotal, metricsContentType, metricsText } from "../metrics.js";
 import { getStoreHealth } from "../vectorstore/chroma.js";
 import { registerErrorHandler } from "./error-handler.js";
 import {
@@ -24,6 +30,7 @@ import {
   registerSecurityMiddleware,
   sanitizeInput,
 } from "./middleware/index.js";
+import { conversationRoutes } from "./routes/conversations.js";
 import { deepRoutes } from "./routes/deep.js";
 import { historyRoutes } from "./routes/history.js";
 import { queryRoutes } from "./routes/query.js";
@@ -35,6 +42,10 @@ const log = createLogger("api:server");
 export async function buildServer() {
   assertConfig();
   initAuth();
+
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const webDist = path.resolve(here, "../..", "web/dist");
+  const serveWeb = fs.existsSync(path.join(webDist, "index.html"));
 
   const server = Fastify({
     logger: false,
@@ -92,6 +103,15 @@ export async function buildServer() {
   // ── 安全中间件 ──
   await registerSecurityMiddleware(server);
 
+  // ── HTTP 指标 ──
+  server.addHook("onResponse", (req, reply, done) => {
+    const route = req.routeOptions?.url ?? req.url.split("?")[0] ?? "unknown";
+    const labels = { method: req.method, route, status: String(reply.statusCode) };
+    httpRequestsTotal.inc(labels);
+    httpRequestDuration.observe(labels, reply.elapsedTime / 1000);
+    done();
+  });
+
   // ── CORS ──
   await server.register(cors, {
     origin: config.corsOrigin,
@@ -103,11 +123,12 @@ export async function buildServer() {
   server.addHook("onRequest", rateLimitMiddleware);
 
   // ── 认证钩子 ──
-  // 公开路径:健康检查、就绪检查、OpenAPI 文档;OPTIONS 预检交给 CORS
-  const publicPaths = new Set(["/health", "/ready"]);
+  // 公开路径:健康检查、就绪检查、指标、OpenAPI 文档、Web 静态资源;OPTIONS 预检交给 CORS
+  const publicPaths = new Set(["/health", "/ready", "/metrics"]);
   const isPublicPath = (url: string): boolean => {
-    const path = url.split("?")[0] ?? "";
-    return publicPaths.has(path) || path === "/docs" || path.startsWith("/docs/");
+    const pathname = url.split("?")[0] ?? "";
+    if (pathname.startsWith("/api/") || pathname === "/api") return false;
+    return publicPaths.has(pathname) || pathname === "/docs" || pathname.startsWith("/docs/") || serveWeb;
   };
   server.addHook("onRequest", (req, reply, done) => {
     if (req.method === "OPTIONS" || isPublicPath(req.url)) {
@@ -163,6 +184,12 @@ export async function buildServer() {
     },
   );
 
+  // ── 指标 ──
+  server.get("/metrics", async (_req, reply) => {
+    reply.header("Content-Type", metricsContentType);
+    return reply.send(await metricsText());
+  });
+
   // ── 优雅关闭 ──
   const shutdown = async (signal: string) => {
     log.info({ signal }, "Shutting down...");
@@ -181,9 +208,26 @@ export async function buildServer() {
 
   // ── Routes ──
   await server.register(queryRoutes, { prefix: "/api" });
+  await server.register(conversationRoutes, { prefix: "/api" });
   await server.register(deepRoutes, { prefix: "/api" });
   await server.register(historyRoutes, { prefix: "/api" });
   await server.register(statusRoutes, { prefix: "/api" });
+
+  // ── Web 静态资源(构建产物存在时) ──
+  if (serveWeb) {
+    await server.register(fastifyStatic, {
+      root: webDist,
+      prefix: "/",
+      wildcard: false,
+    });
+    server.setNotFoundHandler((req, reply) => {
+      if (req.url.startsWith("/api") || req.url.startsWith("/docs") || req.url === "/metrics") {
+        return reply.status(404).send(new YijingError(ErrorCode.NOT_FOUND, "Not found", { statusCode: 404 }).toJSON());
+      }
+      return reply.sendFile("index.html");
+    });
+    log.info({ webDist }, "Web UI served from build output");
+  }
 
   // ── 全局错误处理 ──
   registerErrorHandler(server);

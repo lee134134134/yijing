@@ -53,8 +53,8 @@ tmp/
 # PDF sources
 /pdf
 
-# Legacy
-/web/
+# Generated fulltext corpus (mounted at runtime)
+/corpus
 
 # Docker
 .dockerignore

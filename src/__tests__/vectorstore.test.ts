@@ -41,6 +41,13 @@ vi.mock("../vectorstore/fts.js", () => ({
   clearFts: vi.fn(async () => undefined),
 }));
 
+vi.mock("../vectorstore/manifest.js", () => ({
+  activeCollectionName: () => "test_collection",
+  checkManifest: () => ({ ok: true }),
+  deleteManifest: vi.fn(),
+  readManifest: () => null,
+}));
+
 vi.mock("../vectorstore/embeddings.js", () => ({
   getEmbeddings: vi.fn(() => ({
     embedQuery: vi.fn(async () => [0.1, 0.2, 0.3]),

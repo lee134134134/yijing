@@ -2,16 +2,17 @@
 # 基础镜像用 Debian(glibc)而非 Alpine(musl):@huggingface/transformers v4 在
 # Node 下强依赖 onnxruntime-node 原生绑定,而 ORT 仅提供 glibc 构建(musl 下
 # dlopen 失败)。全量镜像自带构建工具链,原生模块(prebuild 失效时)可兜底编译。
-FROM node:26 AS builder
+FROM node:24 AS builder
 
 WORKDIR /app
 
 COPY package.json package-lock.json ./
 RUN npm ci
 
-COPY tsconfig.json ./
+COPY tsconfig.json vite.web.config.ts ./
 COPY src/ ./src/
-RUN npm run build
+COPY web/ ./web/
+RUN npm run build && npm run build:web
 
 # ── 构建期预热本地 Embedding 模型 ──
 # 默认 local 提供方;镜像内烘焙模型缓存(dtype 必须与运行时 embeddings.ts
@@ -29,18 +30,19 @@ RUN mkdir -p /app/model-cache && \
     })"
 
 # ── Production Stage ──
-FROM node:26 AS runner
+FROM node:24 AS runner
 
 WORKDIR /app
 
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends tini ca-certificates && \
+    apt-get install -y --no-install-recommends tini ca-certificates curl && \
     rm -rf /var/lib/apt/lists/*
 
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 
 COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/web/dist ./web/dist
 COPY --from=builder /app/model-cache ./model-cache
 COPY memory/ ./memory/
 
@@ -52,6 +54,9 @@ ENV API_HOST=0.0.0.0
 ENV CHROMA_DB_URL=http://chromadb:8000
 
 EXPOSE 3001
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD curl -fsS http://127.0.0.1:3001/health || exit 1
 
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["node", "dist/api/server.js"]

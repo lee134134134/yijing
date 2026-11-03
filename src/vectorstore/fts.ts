@@ -10,6 +10,7 @@
  * - 采用 bigram(桂枝汤 → "桂枝 枝汤"),查询同样处理
  * - 拉丁/数字按单词小写
  *
+ * 表名带 _v2:元数据新增 book/chapter/page 等字段;旧表保留,避免 ALTER 限制。
  * 该索引是 dense 的补充:失败只降级,不影响主检索链路。
  */
 
@@ -23,6 +24,7 @@ import { buildCitation } from "../rag/citation.js";
 import type { KnowledgeDocument, KnowledgeMetadata, RetrievedDocument } from "../types.js";
 
 const log = createLogger("vectorstore:fts");
+const TABLE = "chunks_fts_v2";
 
 let _db: Database.Database | null = null;
 
@@ -34,7 +36,7 @@ function getDb(): Database.Database {
   db.pragma("journal_mode = WAL");
   db.pragma("busy_timeout = 5000");
   db.exec(`
-    CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
+    CREATE VIRTUAL TABLE IF NOT EXISTS ${TABLE} USING fts5(
       search_text,
       ref_id UNINDEXED,
       source UNINDEXED,
@@ -43,6 +45,12 @@ function getDb(): Database.Database {
       h3 UNINDEXED,
       domain UNINDEXED,
       line_range UNINDEXED,
+      book UNINDEXED,
+      chapter UNINDEXED,
+      section_path UNINDEXED,
+      page_start UNINDEXED,
+      page_end UNINDEXED,
+      layer UNINDEXED,
       content UNINDEXED,
       tokenize = 'unicode61'
     );
@@ -101,6 +109,12 @@ interface FtsInsertRow {
   h3: string | null;
   domain: string;
   line_range: string | null;
+  book: string | null;
+  chapter: string | null;
+  section_path: string | null;
+  page_start: number | null;
+  page_end: number | null;
+  layer: string | null;
   content: string;
 }
 
@@ -112,6 +126,12 @@ interface FtsRow {
   h3: string | null;
   domain: string;
   line_range: string | null;
+  book: string | null;
+  chapter: string | null;
+  section_path: string | null;
+  page_start: number | null;
+  page_end: number | null;
+  layer: string | null;
   content: string;
 }
 
@@ -119,17 +139,28 @@ interface FtsRow {
 export async function rebuildFts(docs: KnowledgeDocument[]): Promise<number> {
   const db = getDb();
   const insert = db.prepare(`
-    INSERT INTO chunks_fts
-      (search_text, ref_id, source, h1, h2, h3, domain, line_range, content)
+    INSERT INTO ${TABLE}
+      (search_text, ref_id, source, h1, h2, h3, domain, line_range,
+       book, chapter, section_path, page_start, page_end, layer, content)
     VALUES
-      (@search_text, @ref_id, @source, @h1, @h2, @h3, @domain, @line_range, @content)
+      (@search_text, @ref_id, @source, @h1, @h2, @h3, @domain, @line_range,
+       @book, @chapter, @section_path, @page_start, @page_end, @layer, @content)
   `);
 
   const rows: FtsInsertRow[] = docs.map((doc) => {
     const citation = buildCitation(doc);
     return {
       search_text: tokenizeForFts(
-        `${doc.pageContent}\n${citation.h1 ?? ""} ${citation.h2 ?? ""} ${citation.h3 ?? ""} ${citation.domain}`,
+        [
+          doc.pageContent,
+          citation.h1 ?? "",
+          citation.h2 ?? "",
+          citation.h3 ?? "",
+          citation.domain,
+          citation.book ?? "",
+          citation.chapter ?? "",
+          citation.sectionPath ?? "",
+        ].join("\n"),
       ),
       ref_id: citation.refId,
       source: citation.source,
@@ -138,12 +169,18 @@ export async function rebuildFts(docs: KnowledgeDocument[]): Promise<number> {
       h3: citation.h3 ?? null,
       domain: citation.domain,
       line_range: citation.lineRange ?? null,
+      book: citation.book ?? null,
+      chapter: citation.chapter ?? null,
+      section_path: citation.sectionPath ?? null,
+      page_start: citation.pageStart ?? null,
+      page_end: citation.pageEnd ?? null,
+      layer: citation.layer ?? null,
       content: doc.pageContent,
     };
   });
 
   const tx = db.transaction((entries: FtsInsertRow[]) => {
-    db.exec("DELETE FROM chunks_fts");
+    db.exec(`DELETE FROM ${TABLE}`);
     for (const entry of entries) insert.run(entry);
   });
   tx(rows);
@@ -159,10 +196,11 @@ export async function searchFts(query: string, topK: number): Promise<RetrievedD
 
   const rows = getDb()
     .prepare(
-      `SELECT ref_id, source, h1, h2, h3, domain, line_range, content
-       FROM chunks_fts
-       WHERE chunks_fts MATCH ?
-       ORDER BY bm25(chunks_fts)
+      `SELECT ref_id, source, h1, h2, h3, domain, line_range,
+              book, chapter, section_path, page_start, page_end, layer, content
+       FROM ${TABLE}
+       WHERE ${TABLE} MATCH ?
+       ORDER BY bm25(${TABLE})
        LIMIT ?`,
     )
     .all(match, topK) as FtsRow[];
@@ -178,6 +216,12 @@ export async function searchFts(query: string, topK: number): Promise<RetrievedD
           h2: row.h2 ?? undefined,
           h3: row.h3 ?? undefined,
           lineRange: row.line_range ?? undefined,
+          book: row.book ?? undefined,
+          chapter: row.chapter ?? undefined,
+          sectionPath: row.section_path ?? undefined,
+          pageStart: row.page_start ?? undefined,
+          pageEnd: row.page_end ?? undefined,
+          layer: row.layer === "curated" || row.layer === "fulltext" ? row.layer : undefined,
         },
       }) as RetrievedDocument,
   );
@@ -185,12 +229,12 @@ export async function searchFts(query: string, topK: number): Promise<RetrievedD
 
 /** 清空全文索引(clearAll / ingest 前) */
 export async function clearFts(): Promise<void> {
-  getDb().exec("DELETE FROM chunks_fts");
+  getDb().exec(`DELETE FROM ${TABLE}`);
 }
 
 /** 当前 FTS 文档数 */
 export async function countFts(): Promise<number> {
-  const row = getDb().prepare("SELECT COUNT(*) AS count FROM chunks_fts").get() as { count: number };
+  const row = getDb().prepare(`SELECT COUNT(*) AS count FROM ${TABLE}`).get() as { count: number };
   return row.count;
 }
 

@@ -13,6 +13,9 @@ import type { Citation } from "../types.js";
 
 export class CitationCollector {
   private readonly entries = new Map<string, Citation>();
+  private retrievals = 0;
+
+  constructor(private readonly maxToolCalls: number = 6) {}
 
   add(citation: Citation): void {
     if (!this.entries.has(citation.refId)) {
@@ -22,6 +25,22 @@ export class CitationCollector {
 
   addAll(citations: Citation[]): void {
     for (const citation of citations) this.add(citation);
+  }
+
+  /**
+   * 消费一次检索额度
+   *
+   * 工具层在真正检索前调用;超过 MAX_TOOL_CALLS 后返回 false,
+   * 由工具返回"检索次数已用完"而不是继续烧钱。
+   */
+  tryConsumeRetrieval(): boolean {
+    if (this.retrievals >= this.maxToolCalls) return false;
+    this.retrievals += 1;
+    return true;
+  }
+
+  get retrievalCount(): number {
+    return this.retrievals;
   }
 
   get all(): Citation[] {
@@ -40,8 +59,11 @@ const storage = new AsyncLocalStorage<CitationCollector>();
  *
  * 返回结果与本次执行期间收集到的全部引用。
  */
-export async function collectWithCitations<T>(fn: () => Promise<T>): Promise<{ result: T; citations: Citation[] }> {
-  const collector = new CitationCollector();
+export async function collectWithCitations<T>(
+  fn: () => Promise<T>,
+  options: { maxToolCalls?: number } = {},
+): Promise<{ result: T; citations: Citation[] }> {
+  const collector = new CitationCollector(options.maxToolCalls ?? 6);
   const result = await storage.run(collector, fn);
   return { result, citations: collector.all };
 }

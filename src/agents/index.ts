@@ -92,6 +92,14 @@ interface AgentRunOutcome {
   toolCitations: Citation[];
 }
 
+/** Agent 运行选项(取消 / 成本闸门) */
+export interface AgenticRagOptions {
+  /** 客户端断开或请求超时时 abort */
+  signal?: AbortSignal;
+  /** 单次请求最多检索次数,默认 config.maxToolCalls */
+  maxToolCalls?: number;
+}
+
 /**
  * deep 模式 agenticRag 实现
  *
@@ -107,6 +115,7 @@ async function deepAgenticRag(
   input: string,
   chatHistory?: string,
   onToken?: (chunk: string) => void,
+  options: AgenticRagOptions = {},
 ): Promise<QueryResult> {
   // 先确认真实知识库可用,再花 LLM 的钱;不可用时直接 503,而不是让模型自由发挥
   await assertStoreReady();
@@ -117,58 +126,65 @@ async function deepAgenticRag(
   const messages = [...parseChatHistory(chatHistory), { role: "user" as const, content: input }];
   const agent = buildDeepAgent();
 
-  const { result, citations } = await collectWithCitations<AgentRunOutcome>(async () => {
-    const run = await agent.streamEvents(
-      { messages },
-      { version: "v3", recursionLimit: config.deepAgentMaxIterations },
-    );
+  const { result, citations } = await collectWithCitations<AgentRunOutcome>(
+    async () => {
+      const run = await agent.streamEvents(
+        { messages },
+        {
+          version: "v3",
+          recursionLimit: config.deepAgentMaxIterations,
+          ...(options.signal ? { signal: options.signal } : {}),
+        },
+      );
 
-    let streamedText = "";
-    let retrievalCalls = 0;
-    let retrievalFailures = 0;
-    const toolCitations: Citation[] = [];
+      let streamedText = "";
+      let retrievalCalls = 0;
+      let retrievalFailures = 0;
+      const toolCitations: Citation[] = [];
 
-    await Promise.all([
-      (async () => {
-        for await (const msg of run.messages) {
-          for await (const token of msg.text) {
-            streamedText += token;
-            onToken?.(token);
+      await Promise.all([
+        (async () => {
+          for await (const msg of run.messages) {
+            for await (const token of msg.text) {
+              streamedText += token;
+              onToken?.(token);
+            }
           }
-        }
-      })(),
-      (async () => {
-        for await (const call of run.toolCalls) {
-          if (!RETRIEVAL_TOOL_NAMES.has(call.name)) continue;
-          try {
-            const output = await call.output;
-            retrievalCalls += 1;
-            // 兜底:即使 AsyncLocalStorage 上下文丢失,也能从工具文本恢复引用
-            const text = typeof output === "string" ? output : JSON.stringify(output ?? "");
-            toolCitations.push(...parseToolCitations(text));
-          } catch (err) {
-            // 工具失败不能伪装成"没搜到":计数后由下方统一判定
-            retrievalFailures += 1;
-            log.error({ err, tool: call.name }, "Retrieval tool failed");
+        })(),
+        (async () => {
+          for await (const call of run.toolCalls) {
+            if (!RETRIEVAL_TOOL_NAMES.has(call.name)) continue;
+            try {
+              const output = await call.output;
+              retrievalCalls += 1;
+              // 兜底:即使 AsyncLocalStorage 上下文丢失,也能从工具文本恢复引用
+              const text = typeof output === "string" ? output : JSON.stringify(output ?? "");
+              toolCitations.push(...parseToolCitations(text));
+            } catch (err) {
+              // 工具失败不能伪装成"没搜到":计数后由下方统一判定
+              retrievalFailures += 1;
+              log.error({ err, tool: call.name }, "Retrieval tool failed");
+            }
           }
-        }
-      })(),
-    ]);
+        })(),
+      ]);
 
-    const state = await run.output;
+      const state = await run.output;
 
-    // 所有检索都失败 → 明确报错,而不是让"未检索到"的文案掩盖故障
-    if (retrievalFailures > 0 && retrievalCalls === 0) {
-      throw new VectorStoreError("知识库检索失败，请确认 ChromaDB 与索引状态后重试");
-    }
+      // 所有检索都失败 → 明确报错,而不是让"未检索到"的文案掩盖故障
+      if (retrievalFailures > 0 && retrievalCalls === 0) {
+        throw new VectorStoreError("知识库检索失败，请确认 ChromaDB 与索引状态后重试");
+      }
 
-    return {
-      text: extractFinalText(state, streamedText),
-      streamedText,
-      retrievalCalls,
-      toolCitations,
-    };
-  });
+      return {
+        text: extractFinalText(state, streamedText),
+        streamedText,
+        retrievalCalls,
+        toolCitations,
+      };
+    },
+    { maxToolCalls: options.maxToolCalls ?? config.maxToolCalls },
+  );
 
   const queryType = await classifyPromise;
   // Collector 是主路径;工具输出解析是兜底,两者按 refId 合并
@@ -252,8 +268,10 @@ async function deepDeepAnalysis(input: string): Promise<AnalysisResult> {
   await assertStoreReady();
 
   const agent = buildDeepAnalystAgent();
-  const { result, citations } = await collectWithCitations(() =>
-    agent.invoke({ messages: [{ role: "user", content: input }] }, { recursionLimit: config.deepAgentMaxIterations }),
+  const { result, citations } = await collectWithCitations(
+    () =>
+      agent.invoke({ messages: [{ role: "user", content: input }] }, { recursionLimit: config.deepAgentMaxIterations }),
+    { maxToolCalls: config.maxToolCalls },
   );
 
   // 兜底:从工具消息中恢复引用(不依赖 AsyncLocalStorage)
@@ -307,8 +325,9 @@ export async function agenticRag(
   input: string,
   chatHistory?: string,
   onToken?: (chunk: string) => void,
+  options: AgenticRagOptions = {},
 ): Promise<QueryResult> {
-  return deepAgenticRag(input, chatHistory, onToken);
+  return deepAgenticRag(input, chatHistory, onToken, options);
 }
 
 /**

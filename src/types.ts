@@ -14,6 +14,18 @@ export interface KnowledgeMetadata {
   h3?: string;
   /** 原始 Markdown 文件的行号范围 */
   lineRange?: string;
+  /** 书名(全文语料) */
+  book?: string;
+  /** 章节(全文语料) */
+  chapter?: string;
+  /** 章节路径(全文语料) */
+  sectionPath?: string;
+  /** 起始页码(全文语料) */
+  pageStart?: number;
+  /** 结束页码(全文语料) */
+  pageEnd?: number;
+  /** 语料层级:curated=摘要, fulltext=原文 */
+  layer?: "curated" | "fulltext";
 }
 
 /** 带元数据的知识文档 */
@@ -34,6 +46,12 @@ export interface Citation {
   snippet: string;
   /** 0–1,仅向量检索有 */
   score?: number;
+  book?: string;
+  chapter?: string;
+  sectionPath?: string;
+  pageStart?: number;
+  pageEnd?: number;
+  layer?: "curated" | "fulltext";
 }
 
 /** Agent 分析结果 */
@@ -79,21 +97,11 @@ export interface QueryResult {
   invalidRefIds?: string[];
 }
 
-/** 流式查询块 */
-export interface StreamChunk {
-  type: "text" | "meta" | "error" | "done";
-  /** text: 生成的文本片段; meta: 元数据; error: 错误信息; done: 完成信号 */
-  data: string | QueryResult | { error: string };
-  /** 仅在 type='meta' 时存在 */
-  queryType?: QueryType;
-  docCount?: number;
-  elapsed?: number;
-}
-
 /** API 请求体 */
 export interface QueryRequest {
   query: string;
   stream?: boolean;
+  conversationId?: string;
 }
 
 /** API 响应（非流式） */
@@ -103,6 +111,8 @@ export interface QueryResponse {
   docCount: number;
   elapsed: number;
   citations: Citation[];
+  conversationId: string;
+  messageId: string;
 }
 
 export interface DeepAnalysisResponse {

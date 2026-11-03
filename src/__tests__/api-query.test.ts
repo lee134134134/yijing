@@ -9,9 +9,26 @@ import Fastify from "fastify";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // ── Shared fakes (hoisted so vi.mock factories can reference them) ──
-const h = vi.hoisted(() => ({ agenticRag: vi.fn() }));
+const h = vi.hoisted(() => ({
+  agenticRag: vi.fn(),
+  createConversation: vi.fn(),
+  getConversation: vi.fn(),
+  addConversationMessage: vi.fn(),
+  getHistoryForConversation: vi.fn(),
+}));
 
 vi.mock("../agents/index.js", () => ({ agenticRag: h.agenticRag }));
+
+vi.mock("../vectorstore/chroma.js", () => ({
+  assertStoreReady: vi.fn(async () => undefined),
+}));
+
+vi.mock("../conversation/index.js", () => ({
+  createConversation: h.createConversation,
+  getConversation: h.getConversation,
+  addConversationMessage: h.addConversationMessage,
+  getHistoryForConversation: h.getHistoryForConversation,
+}));
 
 vi.mock("../logger.js", () => ({
   createLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }),
@@ -30,6 +47,16 @@ async function buildApp() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  const conversation = { id: "conv_test", title: "测试", createdAt: 1, updatedAt: 1, messageCount: 0 };
+  h.createConversation.mockReturnValue(conversation);
+  h.getConversation.mockReturnValue(conversation);
+  h.addConversationMessage.mockReturnValue({
+    id: "msg_test",
+    timestamp: 1,
+    role: "assistant",
+    content: "",
+  });
+  h.getHistoryForConversation.mockReturnValue(undefined);
 });
 
 // ================================================================
@@ -47,6 +74,7 @@ describe("POST /api/query (非流式)", () => {
     expect(r2.statusCode).toBe(400);
 
     expect(h.agenticRag).not.toHaveBeenCalled();
+    expect(h.createConversation).not.toHaveBeenCalled();
     await app.close();
   });
 
@@ -60,7 +88,15 @@ describe("POST /api/query (非流式)", () => {
     const body = res.json();
     expect(body).toMatchObject({ response: "归脾汤加减。", queryType: "tcm_prescription", docCount: 2 });
     expect(typeof body.elapsed).toBe("number");
-    expect(h.agenticRag).toHaveBeenCalledWith("失眠怎么调理");
+    expect(body.conversationId).toBe("conv_test");
+    expect(body.messageId).toBe("msg_test");
+    expect(body.citations).toEqual([]);
+    expect(h.agenticRag).toHaveBeenCalledWith(
+      "失眠怎么调理",
+      undefined,
+      undefined,
+      expect.objectContaining({ maxToolCalls: 6 }),
+    );
     await app.close();
   });
 
@@ -113,13 +149,14 @@ describe("POST /api/query (SSE 流式)", () => {
       expect(res.headers.get("content-type")).toContain("text/event-stream");
 
       const text = await res.text();
-      expect(text).toContain("event: message");
-      expect(text).toContain('data: {"type":"text","data":"你"}');
-      expect(text).toContain('data: {"type":"text","data":"好"}');
       expect(text).toContain("event: meta");
-      expect(text).toContain('"queryType":"general_knowledge"');
+      expect(text).toContain("event: token");
+      expect(text).toContain('data: {"text":"你"}');
+      expect(text).toContain('data: {"text":"好"}');
       expect(text).toContain("event: done");
       expect(text).toContain('"response":"你好"');
+      expect(text).toContain('"conversationId":"conv_test"');
+      expect(text).toContain('"messageId":"msg_test"');
       // 快路径(毫秒级)不应触发 25s 心跳
       expect(text).not.toContain(":ping");
     } finally {

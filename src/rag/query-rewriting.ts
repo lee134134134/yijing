@@ -119,15 +119,3 @@ export async function rewriteQuery(
     return { primary: question, alternatives: [], all: [question] };
   }
 }
-
-/**
- * 轻量级查询清理（不调用 LLM，只做规则清理）
- *
- * 适用于不需要 LLM 重写的场景，仅去除口语化前缀。
- */
-export function cleanQuery(question: string): string {
-  return question
-    .replace(/^(请问|我想知道|我想问|你好|您好|帮我|能不能告诉我|可以告诉我|有没有|怎么|如何|为什么)\s*/i, "")
-    .replace(/[？?]+$/, "")
-    .trim();
-}

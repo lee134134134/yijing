@@ -5,7 +5,15 @@
  * 提供 buildDeepAgent() 单例,避免每次问答重复构建(冷启动优化)。
  */
 
-import { createDeepAgent, createSubAgent, type DeepAgent, registerHarnessProfile, type SubAgent } from "deepagents";
+import {
+  createDeepAgent,
+  createSubAgent,
+  createSummarizationMiddleware,
+  type DeepAgent,
+  registerHarnessProfile,
+  StateBackend,
+  type SubAgent,
+} from "deepagents";
 import type { ReactAgent } from "langchain";
 import { todoListMiddleware } from "langchain";
 import { z } from "zod";
@@ -60,6 +68,20 @@ export const DEEP_ANALYST_RESPONSE_SCHEMA = z.object({
 });
 
 /**
+ * 上下文压缩中间件
+ *
+ * 触发阈值取 maxContextTokens 的 70%,为系统提示词/工具输出留余量;
+ * 旧消息卸载到内存 StateBackend 并生成摘要,避免长对话撑爆窗口。
+ */
+function buildSummarizationMiddleware() {
+  return createSummarizationMiddleware({
+    backend: new StateBackend(),
+    trigger: { type: "tokens", value: Math.max(1000, Math.floor(config.maxContextTokens * 0.7)) },
+    keep: { type: "messages", value: 20 },
+  });
+}
+
+/**
  * deep_analyst subagent(D4): /deep 深度分析
  *
  * 延迟到构建 agent 时才创建模型:配置非法时应由 config-validation 给出可读错误,
@@ -72,7 +94,7 @@ function buildDeepAnalystSubAgent(): SubAgent {
     systemPrompt: DEEP_ANALYST_PROMPT,
     tools: [...allTools],
     model: getChatModel({ role: "deep", structuredJson: true }),
-    middleware: config.enableTodoPlanning ? [todoListMiddleware()] : [],
+    middleware: [...(config.enableTodoPlanning ? [todoListMiddleware()] : []), buildSummarizationMiddleware()],
   };
 }
 
@@ -99,7 +121,7 @@ export function buildDeepAgent(): DeepAgent {
     model,
     systemPrompt: DEEP_SYSTEM_PROMPT,
     tools: [...allTools],
-    middleware: config.enableTodoPlanning ? [todoListMiddleware()] : [],
+    middleware: [...(config.enableTodoPlanning ? [todoListMiddleware()] : []), buildSummarizationMiddleware()],
     subagents: [buildDeepAnalystSubAgent()],
   });
 

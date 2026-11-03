@@ -34,7 +34,7 @@ src/
   agents/           DeepAgent.js 编排(agenticRag / deepAnalysis)+ tools + prompts
   conversation/     对话历史持久化(SQLite)
   api/              Fastify server + /api 路由(query/history/deep/status) + SSE
-  tui/              ink 终端界面
+  tui/              vue-termui 终端界面
   __tests__/        Vitest 测试(禁止散落在 src 其他位置)
 ```
 

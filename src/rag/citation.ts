@@ -22,7 +22,7 @@ export function makeRefId(doc: KnowledgeDocument): string {
 
 /** 文档 → 引用条目 */
 export function buildCitation(doc: RetrievedDocument): Citation {
-  const { source, h1, h2, h3, lineRange, domain } = doc.metadata;
+  const { source, h1, h2, h3, lineRange, domain, book, chapter, sectionPath, pageStart, pageEnd, layer } = doc.metadata;
   return {
     refId: makeRefId(doc),
     source,
@@ -33,6 +33,12 @@ export function buildCitation(doc: RetrievedDocument): Citation {
     domain,
     snippet: doc.pageContent.slice(0, 300),
     ...(doc.score !== undefined ? { score: doc.score } : {}),
+    ...(book ? { book } : {}),
+    ...(chapter ? { chapter } : {}),
+    ...(sectionPath ? { sectionPath } : {}),
+    ...(pageStart !== undefined ? { pageStart } : {}),
+    ...(pageEnd !== undefined ? { pageEnd } : {}),
+    ...(layer ? { layer } : {}),
   };
 }
 

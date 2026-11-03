@@ -62,7 +62,7 @@ export async function statusRoutes(server: FastifyInstance) {
             manifest: store.manifest,
           },
           index: {
-            collection: config.chromaCollectionName,
+            collection: store.collectionName,
             exists: store.collection,
             docCount: store.docCount,
           },

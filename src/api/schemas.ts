@@ -30,6 +30,7 @@ export const queryBodySchema = {
   properties: {
     query: { type: "string", minLength: 1, maxLength: 2000 },
     stream: { type: "boolean" },
+    conversationId: { type: "string", minLength: 1, maxLength: 100 },
   },
 } as const;
 
@@ -44,6 +45,12 @@ export const citationSchema = {
     h2: { type: "string" },
     h3: { type: "string" },
     lineRange: { type: "string" },
+    book: { type: "string" },
+    chapter: { type: "string" },
+    sectionPath: { type: "string" },
+    pageStart: { type: "integer" },
+    pageEnd: { type: "integer" },
+    layer: { type: "string" },
     domain: { type: "string" },
     snippet: { type: "string" },
     score: { type: "number" },
@@ -53,13 +60,15 @@ export const citationSchema = {
 /** POST /api/query 响应(stream=false 时) */
 export const queryResponseSchema = {
   type: "object",
-  required: ["response", "queryType", "docCount", "elapsed", "citations"],
+  required: ["response", "queryType", "docCount", "elapsed", "citations", "conversationId", "messageId"],
   properties: {
     response: { type: "string" },
     queryType: { type: "string" },
     docCount: { type: "integer" },
     elapsed: { type: "number" },
     citations: { type: "array", items: citationSchema },
+    conversationId: { type: "string" },
+    messageId: { type: "string" },
   },
 } as const;
 
@@ -161,5 +170,95 @@ export const readyResponseSchema = {
   properties: {
     ready: { type: "boolean" },
     checks: { type: "object", additionalProperties: true },
+  },
+} as const;
+
+// ========================================
+// 会话 / 消息
+// ========================================
+
+export const messageSchema = {
+  type: "object",
+  required: ["id", "timestamp", "role", "content"],
+  properties: {
+    id: { type: "string" },
+    timestamp: { type: "number" },
+    role: { type: "string" },
+    content: { type: "string" },
+    queryType: { type: "string" },
+    docCount: { type: "integer" },
+    citations: { type: "array", items: citationSchema },
+    degraded: { type: "boolean" },
+    model: { type: "string" },
+    latencyMs: { type: "integer" },
+  },
+} as const;
+
+export const conversationSchema = {
+  type: "object",
+  required: ["id", "title", "createdAt", "updatedAt", "messageCount"],
+  properties: {
+    id: { type: "string" },
+    title: { type: "string" },
+    createdAt: { type: "number" },
+    updatedAt: { type: "number" },
+    messageCount: { type: "integer" },
+  },
+} as const;
+
+export const conversationResponseSchema = {
+  type: "object",
+  required: ["conversation"],
+  properties: { conversation: conversationSchema },
+} as const;
+
+export const conversationListResponseSchema = {
+  type: "object",
+  required: ["conversations", "total"],
+  properties: {
+    conversations: { type: "array", items: conversationSchema },
+    total: { type: "integer" },
+  },
+} as const;
+
+export const conversationMessagesResponseSchema = {
+  type: "object",
+  required: ["messages"],
+  properties: {
+    messages: { type: "array", items: messageSchema },
+  },
+} as const;
+
+export const createConversationBodySchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    title: { type: "string", maxLength: 100 },
+  },
+} as const;
+
+export const renameConversationBodySchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["title"],
+  properties: {
+    title: { type: "string", minLength: 1, maxLength: 100 },
+  },
+} as const;
+
+export const conversationListQuerySchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    limit: { type: "integer", minimum: 1, maximum: 200 },
+  },
+} as const;
+
+export const conversationMessagesQuerySchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    limit: { type: "integer", minimum: 1, maximum: 200 },
+    before: { type: "integer", minimum: 0 },
   },
 } as const;

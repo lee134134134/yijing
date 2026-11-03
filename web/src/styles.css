@@ -1,0 +1,382 @@
+@import "tailwindcss";
+
+/**
+ * 视觉基调:典籍纸张 + 克制留白
+ *
+ * - 纸底/墨色/朱砂/黛绿构成单一色系,不引入第二套色彩语言
+ * - 边框 1px 暖灰,圆角 4–8px,不使用玻璃拟态与重阴影
+ * - 标题用宋体,正文用苹方,保证「书页」气质与可读性
+ */
+@theme {
+  --color-paper: #f6f1e7;
+  --color-paper-raised: #fbf8f0;
+  --color-paper-sunk: #f1e9db;
+  --color-paper-deep: #ece3d2;
+  --color-ink: #1f1b16;
+  --color-ink-soft: #453e34;
+  --color-muted: #8a8175;
+  --color-cinnabar: #a63d2f;
+  --color-dai: #3f6b5a;
+  --color-line: #ddd3c2;
+  --color-line-strong: #c8bba5;
+
+  --font-serif: "Songti SC", "Noto Serif SC", "Source Han Serif SC", serif;
+  --font-sans: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif;
+}
+
+@layer base {
+  html {
+    height: 100%;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    margin: 0;
+    min-height: 100%;
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-size: 15px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    background-color: var(--color-paper);
+    /* 极轻的纸纤维与晕染,避免纯色带来的塑料感 */
+    background-image:
+      radial-gradient(circle at 14% 8%, rgba(166, 61, 47, 0.035), transparent 40%),
+      radial-gradient(circle at 88% 82%, rgba(63, 107, 90, 0.04), transparent 44%),
+      repeating-linear-gradient(0deg, rgba(31, 27, 22, 0.012) 0 1px, transparent 1px 4px);
+    background-attachment: fixed;
+  }
+
+  #root {
+    height: 100%;
+  }
+
+  button,
+  input,
+  textarea {
+    font: inherit;
+    color: inherit;
+  }
+
+  button {
+    cursor: pointer;
+  }
+
+  button:disabled {
+    cursor: not-allowed;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-cinnabar);
+    outline-offset: 2px;
+  }
+
+  ::selection {
+    background: rgba(166, 61, 47, 0.18);
+  }
+}
+
+@layer components {
+  /* ---------- 正文 Markdown ---------- */
+  .doc-md {
+    color: var(--color-ink);
+    font-size: 15px;
+    line-height: 1.95;
+    overflow-wrap: break-word;
+  }
+
+  .doc-md > * + * {
+    margin-top: 0.85em;
+  }
+
+  .doc-md h1,
+  .doc-md h2,
+  .doc-md h3,
+  .doc-md h4 {
+    font-family: var(--font-serif);
+    font-weight: 600;
+    line-height: 1.55;
+    letter-spacing: 0.02em;
+  }
+
+  .doc-md h2 {
+    margin-top: 1.6em;
+    padding-left: 12px;
+    border-left: 3px solid var(--color-cinnabar);
+    font-size: 18px;
+  }
+
+  .doc-md h3 {
+    margin-top: 1.4em;
+    font-size: 16px;
+  }
+
+  .doc-md h1 {
+    margin-top: 1.6em;
+    font-size: 20px;
+  }
+
+  .doc-md p {
+    margin: 0;
+  }
+
+  .doc-md strong {
+    font-weight: 600;
+    color: var(--color-ink);
+  }
+
+  .doc-md em {
+    color: var(--color-ink-soft);
+  }
+
+  .doc-md a {
+    color: var(--color-cinnabar);
+    text-decoration: underline;
+    text-underline-offset: 3px;
+    text-decoration-thickness: 1px;
+  }
+
+  .doc-md a:hover {
+    color: var(--color-ink);
+  }
+
+  .doc-md ul,
+  .doc-md ol {
+    padding-left: 1.35em;
+  }
+
+  .doc-md ul {
+    list-style: square;
+  }
+
+  .doc-md ol {
+    list-style: decimal;
+  }
+
+  .doc-md li {
+    margin: 0.35em 0;
+    padding-left: 0.15em;
+  }
+
+  .doc-md li::marker {
+    color: var(--color-cinnabar);
+  }
+
+  .doc-md li > ul,
+  .doc-md li > ol {
+    margin-top: 0.35em;
+  }
+
+  .doc-md blockquote {
+    margin: 1em 0;
+    padding: 0.35em 0 0.35em 1em;
+    border-left: 2px solid var(--color-line-strong);
+    color: var(--color-ink-soft);
+    font-family: var(--font-serif);
+  }
+
+  .doc-md code {
+    padding: 0.1em 0.35em;
+    border-radius: 4px;
+    background: var(--color-paper-deep);
+    font-size: 0.88em;
+  }
+
+  .doc-md pre {
+    overflow-x: auto;
+    padding: 12px 14px;
+    border: 1px solid var(--color-line);
+    border-radius: 4px;
+    background: var(--color-paper-deep);
+    line-height: 1.7;
+  }
+
+  .doc-md pre code {
+    padding: 0;
+    background: none;
+  }
+
+  .doc-md table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+
+  .doc-md th,
+  .doc-md td {
+    padding: 6px 10px;
+    border: 1px solid var(--color-line);
+    text-align: left;
+    vertical-align: top;
+  }
+
+  .doc-md th {
+    background: var(--color-paper-deep);
+    font-weight: 600;
+  }
+
+  .doc-md hr {
+    margin: 1.6em 0;
+    border: 0;
+    border-top: 1px solid var(--color-line);
+  }
+
+  /* ---------- 行内引用上标 ---------- */
+  .cite-ref button {
+    display: inline-block;
+    min-width: 15px;
+    margin: 0 2px;
+    padding: 1px 3px;
+    border: 1px solid rgba(166, 61, 47, 0.4);
+    border-radius: 4px;
+    background: transparent;
+    color: var(--color-cinnabar);
+    font-family: var(--font-sans);
+    font-size: 10px;
+    line-height: 1.2;
+    font-variant-numeric: tabular-nums;
+    vertical-align: super;
+    transition:
+      background-color 160ms ease,
+      color 160ms ease;
+  }
+
+  .cite-ref button:hover,
+  .cite-ref button[aria-current="true"] {
+    background: var(--color-cinnabar);
+    color: var(--color-paper);
+  }
+
+  /* ---------- 流式光标 ---------- */
+  .stream-caret {
+    display: inline-block;
+    width: 6px;
+    height: 1.02em;
+    background: var(--color-cinnabar);
+    vertical-align: -0.12em;
+    animation: caret-blink 1.05s steps(1) infinite;
+  }
+
+  /* ---------- 滚动条 ---------- */
+  .scroll-thin {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-line-strong) transparent;
+  }
+
+  .scroll-thin::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  .scroll-thin::-webkit-scrollbar-thumb {
+    border: 2px solid var(--color-paper);
+    border-radius: 8px;
+    background: var(--color-line-strong);
+  }
+
+  .scroll-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  /* ---------- 通用块 ---------- */
+  .paper-card {
+    border: 1px solid var(--color-line);
+    border-radius: 6px;
+    background: var(--color-paper-raised);
+  }
+
+  .label-caps {
+    font-size: 10px;
+    letter-spacing: 0.24em;
+    text-transform: uppercase;
+    color: var(--color-muted);
+  }
+
+  .rise {
+    animation: rise-in 180ms ease-out both;
+  }
+
+  .fade-in {
+    animation: fade-in 180ms ease-out both;
+  }
+
+  .sheet-in {
+    animation: sheet-in 200ms ease-out both;
+  }
+
+  .drawer-in {
+    animation: drawer-in 200ms ease-out both;
+  }
+}
+
+@keyframes caret-blink {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes sheet-in {
+  from {
+    transform: translateY(14px);
+    opacity: 0.6;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@keyframes drawer-in {
+  from {
+    transform: translateX(-16px);
+    opacity: 0.7;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stream-caret {
+    animation: none;
+  }
+
+  .rise,
+  .fade-in,
+  .sheet-in {
+    animation: none;
+  }
+
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+  }
+}

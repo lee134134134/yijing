@@ -99,6 +99,7 @@ export async function runMigration(): Promise<void> {
   const ftsCount = await rebuildFts(knowledgeDocs);
   writeManifest({
     collection: config.chromaCollectionName,
+    baseCollection: config.chromaCollectionName,
     embeddingProvider: config.embeddingProvider,
     embeddingModel: config.embeddingModel,
     embeddingDimension: config.embeddingDimension,

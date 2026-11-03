@@ -14,7 +14,20 @@ vi.mock("../config.js", () => ({
   },
 }));
 
-import { addMessage, clearHistory, getHistoryForContext, getRecentHistory } from "../conversation/store.js";
+import {
+  addConversationMessage,
+  addMessage,
+  clearHistory,
+  createConversation,
+  deleteConversation,
+  getConversation,
+  getHistoryForContext,
+  getHistoryForConversation,
+  getMessages,
+  getRecentHistory,
+  listConversations,
+  renameConversation,
+} from "../conversation/store.js";
 
 afterAll(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -40,7 +53,7 @@ describe("conversation store", () => {
   it("assigns id and timestamp automatically", () => {
     addMessage({ role: "user", content: "test" });
     const history = getRecentHistory();
-    expect(history[0].id).toMatch(/^conv_\d+_\d+_[a-z0-9]+$/);
+    expect(history[0].id).toMatch(/^msg_\d+_[a-z0-9]+$/);
     expect(history[0].timestamp).toBeGreaterThan(0);
   });
 
@@ -102,5 +115,67 @@ describe("conversation store", () => {
     addMessage({ role: "user", content: "test" });
     clearHistory();
     expect(getRecentHistory()).toHaveLength(0);
+  });
+});
+
+describe("conversation v2", () => {
+  beforeEach(() => {
+    clearHistory();
+  });
+
+  it("创建 / 列表 / 详情", () => {
+    const created = createConversation("桂枝汤讨论");
+    expect(created.id).toMatch(/^conv_\d+_[a-z0-9]+$/);
+    expect(created.title).toBe("桂枝汤讨论");
+
+    const list = listConversations();
+    expect(list).toHaveLength(1);
+    expect(list[0]?.id).toBe(created.id);
+
+    expect(getConversation(created.id)?.title).toBe("桂枝汤讨论");
+    expect(getConversation("missing")).toBeNull();
+  });
+
+  it("消息按时间正序返回,并可生成会话历史", () => {
+    const conversation = createConversation("测试");
+    addConversationMessage(conversation.id, { role: "user", content: "Q1" });
+    addConversationMessage(conversation.id, { role: "assistant", content: "A1" });
+    addConversationMessage(conversation.id, { role: "user", content: "Q2" });
+
+    const messages = getMessages(conversation.id);
+    expect(messages.map((m) => m.content)).toEqual(["Q1", "A1", "Q2"]);
+
+    const context = getHistoryForConversation(conversation.id, 2);
+    expect(JSON.parse(context ?? "[]")).toEqual([
+      { role: "user", content: "Q1" },
+      { role: "assistant", content: "A1" },
+      { role: "user", content: "Q2" },
+    ]);
+  });
+
+  it("messages 支持 limit 与 before 翻页", async () => {
+    const conversation = createConversation("分页");
+    for (let i = 0; i < 5; i++) {
+      addConversationMessage(conversation.id, { role: "user", content: `m${i}` });
+      await new Promise((resolve) => setTimeout(resolve, 2));
+    }
+    const all = getMessages(conversation.id, 10);
+    const page = getMessages(conversation.id, 2, all[2]?.timestamp);
+    expect(page.map((m) => m.content)).toEqual(["m0", "m1"]);
+  });
+
+  it("重命名会话", () => {
+    const conversation = createConversation("旧标题");
+    expect(renameConversation(conversation.id, "新标题")).toBe(true);
+    expect(getConversation(conversation.id)?.title).toBe("新标题");
+    expect(renameConversation("missing", "x")).toBe(false);
+  });
+
+  it("软删除后列表与详情不可见", () => {
+    const conversation = createConversation("待删除");
+    expect(deleteConversation(conversation.id)).toBe(true);
+    expect(listConversations()).toHaveLength(0);
+    expect(getConversation(conversation.id)).toBeNull();
+    expect(deleteConversation(conversation.id)).toBe(false);
   });
 });

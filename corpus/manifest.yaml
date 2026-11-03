@@ -1,0 +1,286 @@
+# 语料台账
+#
+# scope: core=倪海厦系列, reference=传统典籍, exclude=不入库
+# textLayer/pages 由 tools/pdf2md/cli.ts --inventory 或 --book 更新
+# duplicateOf: 同书多版本时填权威版本的 id
+books:
+  - id: 倪海厦人纪系列之黄帝内经-a08217
+    title: 倪海厦人纪系列之黄帝内经
+    pdf: pdf/0611/倪海厦人纪系列之黄帝内经.pdf
+    scope: core
+    textLayer: yes
+    pages: 461
+    duplicateOf: null
+  - id: 倪海厦人纪系列之金匮要略-7594e4
+    title: 倪海厦人纪系列之金匮要略
+    pdf: pdf/0611/倪海厦人纪系列之金匮要略.pdf
+    scope: core
+    textLayer: yes
+    pages: 419
+    duplicateOf: null
+  - id: 倪海厦人纪系列之伤寒论-3182f3
+    title: 倪海厦人纪系列之伤寒论
+    pdf: pdf/0611/倪海厦人纪系列之伤寒论.pdf
+    scope: core
+    textLayer: yes
+    pages: 209
+    duplicateOf: null
+  - id: 倪海厦人纪系列之神农本草经-f199d2
+    title: 倪海厦人纪系列之神农本草经
+    pdf: pdf/0611/倪海厦人纪系列之神农本草经.pdf
+    scope: core
+    textLayer: yes
+    pages: 154
+    duplicateOf: null
+  - id: 倪海厦人纪系列之针灸教程-c800fd
+    title: 倪海厦人纪系列之针灸教程
+    pdf: pdf/0611/倪海厦人纪系列之针灸教程.pdf
+    scope: core
+    textLayer: yes
+    pages: 216
+    duplicateOf: null
+  - id: 倪海厦天纪系列之地脉道-2a27ca
+    title: 倪海厦天纪系列之地脉道
+    pdf: pdf/0611/倪海厦天纪系列之地脉道.pdf
+    scope: core
+    textLayer: yes
+    pages: 65
+    duplicateOf: null
+  - id: 倪海厦天纪系列之人间道-985847
+    title: 倪海厦天纪系列之人间道
+    pdf: pdf/0611/倪海厦天纪系列之人间道.pdf
+    scope: core
+    textLayer: yes
+    pages: 146
+    duplicateOf: null
+  - id: 倪海厦天纪系列之天机道-a22a51
+    title: 倪海厦天纪系列之天机道
+    pdf: pdf/0611/倪海厦天纪系列之天机道.pdf
+    scope: core
+    textLayer: no
+    pages: 82
+    duplicateOf: null
+  - id: 倪海厦文集及医桉最新版-18e9e2
+    title: 倪海厦文集及医桉最新版
+    pdf: pdf/0611/倪海厦文集及医桉最新版.pdf
+    scope: core
+    textLayer: yes
+    pages: 139
+    duplicateOf: null
+  - id: 倪海厦先生医案-f6f31a
+    title: 倪海厦先生医案
+    pdf: pdf/0611/倪海厦先生医案.pdf
+    scope: core
+    textLayer: yes
+    pages: 93
+    duplicateOf: null
+  - id: 倪海夏-汉唐中医方剂讲解-9c6205
+    title: 倪海夏-汉唐中医方剂讲解
+    pdf: pdf/0611/倪海夏-汉唐中医方剂讲解.pdf
+    scope: core
+    textLayer: yes
+    pages: 235
+    duplicateOf: null
+  - id: "[图解古代天人学.滴天髓.上部.八字格局].任铁樵.扫描版-722821"
+    title: "[图解古代天人学.滴天髓.上部.八字格局].任铁樵.扫描版"
+    pdf: pdf/0612/[图解古代天人学.滴天髓.上部.八字格局].任铁樵.扫描版.pdf
+    scope: reference
+    textLayer: no
+    pages: 424
+    duplicateOf: null
+  - id: "[图解古代天人学.滴天髓.下部.吉凶论断].任铁樵-68659c"
+    title: "[图解古代天人学.滴天髓.下部.吉凶论断].任铁樵"
+    pdf: pdf/0612/[图解古代天人学.滴天髓.下部.吉凶论断].任铁樵.pdf
+    scope: reference
+    textLayer: no
+    pages: 207
+    duplicateOf: null
+  - id: 117中国古代房中养生秘笈-369023
+    title: 117中国古代房中养生秘笈
+    pdf: pdf/0612/117中国古代房中养生秘笈.pdf
+    scope: reference
+    textLayer: no
+    pages: 1928
+    duplicateOf: null
+  - id: 八部金刚功-db51f7
+    title: 八部金刚功
+    pdf: pdf/0612/八部金刚功.pdf
+    scope: reference
+    textLayer: no
+    pages: 147
+    duplicateOf: null
+  - id: 大成国学-麻衣神相_12601552-cb0dfa
+    title: 大成国学-麻衣神相_12601552
+    pdf: pdf/0612/大成国学-麻衣神相_12601552.pdf
+    scope: reference
+    textLayer: no
+    pages: 390
+    duplicateOf: null
+  - id: 滴天髓_13161055-d870ed
+    title: 滴天髓_13161055
+    pdf: pdf/0612/滴天髓_13161055.pdf
+    scope: reference
+    textLayer: no
+    pages: 371
+    duplicateOf: null
+  - id: 滴天髓-刘伯温注-fcb38c
+    title: 滴天髓-刘伯温注
+    pdf: pdf/0612/滴天髓-刘伯温注.pdf
+    scope: reference
+    textLayer: yes
+    pages: 26
+    duplicateOf: null
+  - id: 滴天髓补注-3d4b24
+    title: 滴天髓补注
+    pdf: pdf/0612/滴天髓补注.pdf
+    scope: reference
+    textLayer: no
+    pages: 339
+    duplicateOf: null
+  - id: 滴天髓阐微[白话文]-1b5e40
+    title: 滴天髓阐微[白话文]
+    pdf: pdf/0612/滴天髓阐微[白话文].pdf
+    scope: reference
+    textLayer: yes
+    pages: 76
+    duplicateOf: null
+  - id: 滴天髓阐微++最新编注白话全译_13634502-8019c4
+    title: 滴天髓阐微++最新编注白话全译_13634502
+    pdf: pdf/0612/滴天髓阐微++最新编注白话全译_13634502.pdf
+    scope: reference
+    textLayer: no
+    pages: 441
+    duplicateOf: null
+  - id: 滴天髓辑要(民国36年）-ad602a
+    title: 滴天髓辑要(民国36年）
+    pdf: pdf/0612/滴天髓辑要(民国36年）.pdf
+    scope: reference
+    textLayer: no
+    pages: 65
+    duplicateOf: null
+  - id: 滴天髓征义-f9c287
+    title: 滴天髓征义
+    pdf: pdf/0612/滴天髓征义.pdf
+    scope: reference
+    textLayer: no
+    pages: 530
+    duplicateOf: null
+  - id: 风水-命理-麻衣神相珍本-0ae936
+    title: 风水 命理 麻衣神相珍本
+    pdf: pdf/0612/风水 命理 麻衣神相珍本.pdf
+    scope: reference
+    textLayer: no
+    pages: 195
+    duplicateOf: null
+  - id: 梁湘润：滴天髓子平真诠今注-cceb46
+    title: 梁湘润：滴天髓子平真诠今注
+    pdf: pdf/0612/梁湘润：滴天髓子平真诠今注.pdf
+    scope: reference
+    textLayer: no
+    pages: 122
+    duplicateOf: null
+  - id: 麻衣神相(现代版)-728c89
+    title: 麻衣神相(现代版)
+    pdf: pdf/0612/麻衣神相(现代版).pdf
+    scope: reference
+    textLayer: no
+    pages: 191
+    duplicateOf: null
+  - id: 米晶子济世良方-898b6a
+    title: 米晶子济世良方
+    pdf: pdf/0612/米晶子济世良方.pdf
+    scope: reference
+    textLayer: no
+    pages: 194
+    duplicateOf: null
+  - id: 炁体源流-上-c043b1
+    title: 炁体源流  上
+    pdf: pdf/0612/炁体源流  上.pdf
+    scope: reference
+    textLayer: no
+    pages: 234
+    duplicateOf: null
+  - id: 炁体源流-下-510546
+    title: 炁体源流  下
+    pdf: pdf/0612/炁体源流  下.pdf
+    scope: reference
+    textLayer: no
+    pages: 278
+    duplicateOf: null
+  - id: 图解古代人体工程学-1-麻衣神相-全白话图解本-913f44
+    title: 图解古代人体工程学  1  麻衣神相  全白话图解本
+    pdf: pdf/0612/图解古代人体工程学  1  麻衣神相  全白话图解本.pdf
+    scope: reference
+    textLayer: no
+    pages: 526
+    duplicateOf: null
+  - id: 图解麻衣神相_12601552_（宋）麻衣道者原著...-02af6e
+    title: 图解麻衣神相_12601552_（宋）麻衣道者原著...
+    pdf: pdf/0612/图解麻衣神相_12601552_（宋）麻衣道者原著....pdf
+    scope: reference
+    textLayer: no
+    pages: 387
+    duplicateOf: null
+  - id: 圆运动的古中医学[清]彭子益著-李可主校(中医药出版社-2007.6第1版)-716edc
+    title: 圆运动的古中医学[清]彭子益著 李可主校(中医药出版社 2007.6第1版)
+    pdf: pdf/0612/圆运动的古中医学[清]彭子益著 李可主校(中医药出版社 2007.6第1版).pdf
+    scope: reference
+    textLayer: no
+    pages: 326
+    duplicateOf: null
+  - id: 圆运动的古中医学续集[清]彭子益著-李可主校(中医药出版社-2009.6第1版)-840741
+    title: 圆运动的古中医学续集[清]彭子益著 李可主校(中医药出版社 2009.6第1版)
+    pdf: pdf/0612/圆运动的古中医学续集[清]彭子益著 李可主校(中医药出版社 2009.6第1版).pdf
+    scope: reference
+    textLayer: no
+    pages: 207
+    duplicateOf: null
+  - id: 中国医著系列丛书—中国骨伤科学-c30b45
+    title: 中国医著系列丛书—中国骨伤科学
+    pdf: pdf/0612/中国医著系列丛书—中国骨伤科学.pdf
+    scope: reference
+    textLayer: no
+    pages: 879
+    duplicateOf: null
+  - id: 中国医著系列丛书—中国五脏病学-375cd0
+    title: 中国医著系列丛书—中国五脏病学
+    pdf: pdf/0612/中国医著系列丛书—中国五脏病学.pdf
+    scope: reference
+    textLayer: no
+    pages: 854
+    duplicateOf: null
+  - id: 中国医著系列丛书—中国心理卫生学-47dcc6
+    title: 中国医著系列丛书—中国心理卫生学
+    pdf: pdf/0612/中国医著系列丛书—中国心理卫生学.pdf
+    scope: reference
+    textLayer: no
+    pages: 302
+    duplicateOf: null
+  - id: 中国医著系列丛书—中国药膳大全-393677
+    title: 中国医著系列丛书—中国药膳大全
+    pdf: pdf/0612/中国医著系列丛书—中国药膳大全.pdf
+    scope: reference
+    textLayer: no
+    pages: 691
+    duplicateOf: null
+  - id: 中国医著系列丛书—中国医易学-c834ca
+    title: 中国医著系列丛书—中国医易学
+    pdf: pdf/0612/中国医著系列丛书—中国医易学.pdf
+    scope: reference
+    textLayer: no
+    pages: 580
+    duplicateOf: null
+  - id: 中国医著系列丛书—中医病机治法学-4a42e1
+    title: 中国医著系列丛书—中医病机治法学
+    pdf: pdf/0612/中国医著系列丛书—中医病机治法学.pdf
+    scope: reference
+    textLayer: no
+    pages: 683
+    duplicateOf: null
+  - id: 子平精粹++2++秘授滴天髓阐微_12542765-9b2e35
+    title: 子平精粹++2++秘授滴天髓阐微_12542765
+    pdf: pdf/0612/子平精粹++2++秘授滴天髓阐微_12542765.pdf
+    scope: reference
+    textLayer: no
+    pages: 406
+    duplicateOf: null

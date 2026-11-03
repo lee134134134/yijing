@@ -33,7 +33,9 @@ vi.mock("../config.js", () => ({
     llmRetryBaseDelay: 10,
     maxHistory: 200,
     maxContextTokens: 8192,
-    enableReranking: false,
+    deepAgentMaxIterations: 25,
+    requestTimeoutMs: 120_000,
+    maxToolCalls: 6,
     enableTodoPlanning: true,
     embeddingModel: "text-embedding-3-small",
     embeddingDimension: 1536,
@@ -90,6 +92,8 @@ vi.mock("deepagents", () => ({
   createDeepAgent: vi.fn(() => h.agent),
   createSubAgent: vi.fn(() => h.analyst),
   registerHarnessProfile: vi.fn(),
+  createSummarizationMiddleware: vi.fn(() => ({})),
+  StateBackend: class {},
 }));
 
 // ── Fake run helpers (streamEvents v3 shape) ─────────────────────
@@ -172,7 +176,7 @@ describe("agenticRag (deep mode)", () => {
     await agenticRag("具体怎么用", "问: 什么是桂枝汤\n答: 桂枝汤是解表剂");
 
     const [input, options] = agent.streamEvents.mock.calls[0];
-    expect(options).toEqual({ version: "v3" });
+    expect(options).toEqual({ version: "v3", recursionLimit: 25 });
     expect(input.messages).toEqual([
       { role: "user", content: "什么是桂枝汤" },
       { role: "assistant", content: "桂枝汤是解表剂" },

@@ -18,7 +18,6 @@ export default defineConfig({
         "src/__tests__/**",
         "src/api/middleware/**",
         "src/config-validation.ts",
-        "src/utils/retry.ts",
         "src/api/server.ts",
       ],
     },
