@@ -61,6 +61,7 @@ vi.mock("../vectorstore/chroma.js", () => ({
   multiQuerySearch: vi.fn(),
   getDocumentCount: vi.fn(),
   listCollections: vi.fn(),
+  assertStoreReady: vi.fn(async () => undefined),
 }));
 
 vi.mock("../logger.js", () => ({

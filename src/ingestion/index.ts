@@ -26,7 +26,7 @@ async function main() {
 
   log.info("\n💾 第3步：写入向量存储...");
   const collections = await listCollections();
-  if (collections.length > 0) {
+  if (collections.includes(config.chromaCollectionName)) {
     log.info("  检测到已有索引数据，正在清空...");
     await clearAll();
   }

@@ -107,6 +107,21 @@ export function validateConfig(): ValidationResult {
     errors.push(`API_PORT (${config.apiPort}) must be between 1 and 65535`);
   }
 
+  // 单机自用:回环地址允许无鉴权;非回环地址必须配置 API_KEYS
+  const loopbackHosts = new Set(["127.0.0.1", "localhost", "::1", "[::1]", "0:0:0:0:0:0:0:1"]);
+  const apiHost = config.apiHost ?? "127.0.0.1";
+  const apiKeys = config.apiKeys ?? [];
+  if (apiKeys.length === 0) {
+    if (!loopbackHosts.has(apiHost)) {
+      errors.push(
+        `API_HOST="${apiHost}" is not loopback but API_KEYS is empty. ` +
+          "Set API_KEYS or bind to 127.0.0.1 (single-user mode).",
+      );
+    } else {
+      warnings.push(`API key authentication disabled (bound to ${apiHost}, single-user mode)`);
+    }
+  }
+
   // ── 日志配置验证 ──
   const validLogLevels = ["fatal", "error", "warn", "info", "debug", "trace"];
   if (!validLogLevels.includes(config.logLevel)) {

@@ -220,7 +220,10 @@ export const config = {
 
   // ── API Server ──
   apiPort: parseInt(process.env.API_PORT || "3001", 10),
-  apiHost: process.env.API_HOST || "0.0.0.0",
+  /** 默认只监听回环地址;需要局域网/容器访问时必须显式改 API_HOST 并配置 API_KEYS */
+  apiHost: process.env.API_HOST || "127.0.0.1",
+  /** 是否信任反向代理的 X-Forwarded-For(默认关闭,避免伪造 IP 绕过限流) */
+  trustProxy: process.env.TRUST_PROXY === "true",
   corsOrigin: process.env.CORS_ORIGIN || "http://localhost:5173",
   /** 最大请求体大小（字节），默认 10MB */
   maxBodySize: parseInt(process.env.MAX_BODY_SIZE || "10485760", 10),
@@ -229,10 +232,12 @@ export const config = {
 
   // ── 安全 ──
   /**
-   * API 密钥白名单(逗号分隔)。为空时回退 OPENAI_API_KEY。
-   * 两者都未配置时认证禁用(仅限本地开发模式)。
+   * API 密钥白名单(逗号分隔)。
+   *
+   * 不再回退 OPENAI_API_KEY:LLM 供应商密钥与服务访问密钥必须分离。
+   * 未配置时仅允许监听回环地址(单机自用);非回环地址启动会直接失败。
    */
-  apiKeys: (process.env.API_KEYS || process.env.OPENAI_API_KEY || "")
+  apiKeys: (process.env.API_KEYS || "")
     .split(",")
     .map((k) => k.trim())
     .filter((k) => k.length > 0),

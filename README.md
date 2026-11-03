@@ -124,9 +124,14 @@ DEEPSEEK_API_KEY=sk-ds...
 
 ## API 文档
 
-启动服务后访问 `http://localhost:3001/docs` 查看 Swagger UI 文档。
+启动服务后访问 `http://localhost:3001/docs` 查看 Swagger UI 文档（文档路径无需认证）。
 
-所有 API 端点均支持 API 密钥认证（`X-API-Key` 请求头）。
+所有 `/api/*` 端点支持 API 密钥认证（`X-API-Key` 请求头或 `Authorization: Bearer`）。
+
+- 默认 `API_HOST=127.0.0.1`，单机自用可不配 `API_KEYS`（仅回环地址放行）。
+- 监听 `0.0.0.0` / 局域网地址时必须配置 `API_KEYS`，否则启动失败。
+- `API_KEYS` 不会回退 `OPENAI_API_KEY`：服务访问密钥与 LLM 供应商密钥必须分离。
+- `GET /health` 为存活检查；`GET /ready` 会真实探测 ChromaDB 与 LLM 配置，未就绪返回 503。
 
 ## 命令
 

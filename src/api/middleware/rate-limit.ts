@@ -5,10 +5,12 @@
  * 企业部署应替换为 Redis 等分布式限流器。
  */
 
+import { createHash } from "node:crypto";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { config } from "../../config.js";
 import { ErrorCode, YijingError } from "../../errors.js";
 import { createLogger } from "../../logger.js";
+import { getApiKey, isValidApiKey } from "./auth.js";
 
 const log = createLogger("api:middleware:rate-limit");
 
@@ -29,20 +31,27 @@ function cleanupExpired(): void {
     }
   }
 }
-setInterval(cleanupExpired, 30_000);
+setInterval(cleanupExpired, 30_000).unref();
 
+/**
+ * 客户端标识
+ *
+ * 已认证请求按 API key 分桶(哈希后,避免 key 进日志);
+ * 匿名请求按 IP 分桶。IP 由 Fastify 依据 trustProxy 解析,
+ * 不再手工读取 X-Forwarded-For(可伪造)。
+ */
 function getClientIdentifier(req: FastifyRequest): string {
-  const ip =
-    (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() ||
-    (req.headers["x-real-ip"] as string) ||
-    (req.socket?.remoteAddress as string) ||
-    "unknown";
-  return ip;
+  if (isValidApiKey(req)) {
+    const key = getApiKey(req) ?? "";
+    const hash = createHash("sha256").update(key).digest("hex").slice(0, 16);
+    return `key:${hash}`;
+  }
+  return `ip:${req.ip || "unknown"}`;
 }
 
 export async function rateLimitMiddleware(req: FastifyRequest, reply: FastifyReply): Promise<void> {
   const identifier = getClientIdentifier(req);
-  const maxRequests = identifier.includes(":") ? config.rateLimitAuthMax : config.rateLimitMax;
+  const maxRequests = identifier.startsWith("key:") ? config.rateLimitAuthMax : config.rateLimitMax;
   const now = Date.now();
   const entry = rateLimitStore.get(identifier);
 

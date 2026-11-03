@@ -80,37 +80,115 @@ export function loadAllMarkdownFiles(): KnowledgeDocument[] {
   return files.map(readMarkdownFile);
 }
 
+/** 按 H3 再拆分 H2 的最小正文长度:短于此保持整块,避免碎片化与正文丢失 */
+const MIN_H3_SPLIT_BODY = 300;
+/** 低于此长度的块视为空块(通常只有短标题) */
+const MIN_SECTION_CHARS = 10;
+
+interface SectionDraft {
+  h2?: string;
+  h3?: string;
+  /** 1-based,含 */
+  startLine: number;
+  /** 1-based,含 */
+  endLine: number;
+  lines: string[];
+}
+
+function headingTitle(line: string | undefined, level: 2 | 3): string {
+  if (!line) return "";
+  const match = line.match(level === 2 ? /^##\s+(.+)/ : /^###\s+(.+)/);
+  return match?.[1]?.trim() ?? "";
+}
+
 /**
- * 解析 Markdown 标题层级，生成更细粒度的文档块
- * 每个二级标题(##)下的内容作为一个独立块
+ * 解析 Markdown 标题层级,生成更细粒度的文档块
+ *
+ * 不变式:原文中所有非空行必须至少落在一个 section 里。
+ * 旧实现遇到"短正文 + H3"时会直接重置 currentLines,导致 H2 正文被丢弃;
+ * 这里改为两遍扫描(先定位标题边界,再按边界切片),不再有覆盖写入。
+ *
+ * 拆分规则:
+ * - 每个 H2 默认一个块(含其下 H3 内容)
+ * - 若 H2 在第一个 H3 之前已有 >= MIN_H3_SPLIT_BODY 的正文,则拆为
+ *   "H2 引言 + 每个 H3 独立块"
+ * - 首个 H2 之前的前言(H1 等)单独成块
  */
 export function extractSections(doc: Document<{ source: string; domain: string }>): KnowledgeDocument[] {
-  const content = doc.pageContent;
-  const lines = content.split("\n");
-  const sections: KnowledgeDocument[] = [];
+  const lines = doc.pageContent.split("\n");
+  const firstH1 = lines.find((l) => /^#\s+/.test(l) && !/^##/.test(l));
+  const h1 = firstH1 ? firstH1.replace(/^#\s+/, "").trim() : "";
 
-  let currentH1 = "";
-  let currentH2 = "";
-  let currentH3 = "";
-  let currentLines: string[] = [];
-  let startLine = 1;
-
-  // 提取文档标题（第一个 # 标题）
-  const firstH1 = lines.find((l) => l.startsWith("# ") && !l.startsWith("##"));
-  if (firstH1) {
-    currentH1 = firstH1.replace(/^#\s+/, "").trim();
+  // 第一遍:定位所有 H2 边界
+  const h2Indices: number[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (/^##\s+/.test(lines[i] ?? "")) h2Indices.push(i);
   }
 
-  function flushSection(endLine: number) {
-    const text = currentLines.join("\n").trim();
-    if (text.length < 10) return; // 忽略过短的片段
+  const drafts: SectionDraft[] = [];
+  const pushDraft = (start: number, end: number, h2?: string, h3?: string): void => {
+    if (end < start) return;
+    drafts.push({
+      h2,
+      h3,
+      startLine: start + 1,
+      endLine: end + 1,
+      lines: lines.slice(start, end + 1),
+    });
+  };
+
+  // 首个 H2 之前的前言(H1、导语)
+  const preambleEnd = h2Indices.length > 0 ? (h2Indices[0] ?? 0) - 1 : lines.length - 1;
+  pushDraft(0, preambleEnd);
+
+  // 第二遍:按 H2 边界切片,长正文再按 H3 切
+  for (let k = 0; k < h2Indices.length; k++) {
+    const start = h2Indices[k] ?? 0;
+    const end = (h2Indices[k + 1] ?? lines.length) - 1;
+    const h2 = headingTitle(lines[start], 2);
+
+    const h3Indices: number[] = [];
+    for (let i = start + 1; i <= end; i++) {
+      if (/^###\s+/.test(lines[i] ?? "")) h3Indices.push(i);
+    }
+
+    if (h3Indices.length === 0) {
+      pushDraft(start, end, h2);
+      continue;
+    }
+
+    const firstH3 = h3Indices[0] ?? end + 1;
+    const bodyBeforeFirstH3 = lines
+      .slice(start + 1, firstH3)
+      .join("\n")
+      .trim();
+
+    // 正文太短:整块保留(含所有 H3),不拆、不丢
+    if (bodyBeforeFirstH3.length < MIN_H3_SPLIT_BODY) {
+      pushDraft(start, end, h2);
+      continue;
+    }
+
+    // 正文足够长:H2 引言 + 每个 H3 独立成块
+    pushDraft(start, firstH3 - 1, h2);
+    for (let j = 0; j < h3Indices.length; j++) {
+      const h3Start = h3Indices[j] ?? end + 1;
+      const h3End = (h3Indices[j + 1] ?? end + 1) - 1;
+      pushDraft(h3Start, h3End, h2, headingTitle(lines[h3Start], 3));
+    }
+  }
+
+  const sections: KnowledgeDocument[] = [];
+  for (const draft of drafts) {
+    const text = draft.lines.join("\n").trim();
+    if (text.length < MIN_SECTION_CHARS) continue; // 只有空白/短标题
 
     const metadata: KnowledgeMetadata = {
       ...doc.metadata,
-      h1: currentH1,
-      h2: currentH2 || undefined,
-      h3: currentH3 || undefined,
-      lineRange: `${startLine}-${endLine}`,
+      h1: h1 || undefined,
+      h2: draft.h2 || undefined,
+      h3: draft.h3 || undefined,
+      lineRange: `${draft.startLine}-${draft.endLine}`,
     };
 
     sections.push(
@@ -119,39 +197,6 @@ export function extractSections(doc: Document<{ source: string; domain: string }
         metadata,
       }),
     );
-  }
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    const h2Match = line.match(/^##\s+(.+)/);
-    const h3Match = line.match(/^###\s+(.+)/);
-
-    if (h2Match) {
-      // 遇到新 H2，刷新上一个 section
-      if (currentLines.length > 0) {
-        flushSection(i);
-      }
-      currentH2 = h2Match[1].trim();
-      currentH3 = "";
-      currentLines = [line];
-      startLine = i + 1;
-    } else if (h3Match) {
-      // 遇到新 H3：如果当前段落太短则合并（避免碎片化）
-      const currentText = currentLines.join("\n").trim();
-      if (currentLines.length > 0 && currentText.length >= 300) {
-        flushSection(i);
-      }
-      currentH3 = h3Match[1].trim();
-      currentLines = [line];
-      startLine = i + 1;
-    } else {
-      currentLines.push(line);
-    }
-  }
-
-  // 最后一个 section
-  if (currentLines.length > 0) {
-    flushSection(lines.length);
   }
 
   return sections;

@@ -8,9 +8,11 @@
  */
 
 import { config } from "../config.js";
+import { VectorStoreError } from "../errors.js";
 import { createLogger } from "../logger.js";
 import { classifyQuery } from "../rag/chain.js";
 import type { AnalysisResult, QueryType } from "../types.js";
+import { assertStoreReady } from "../vectorstore/chroma.js";
 import { buildDeepAgent, buildDeepAnalystAgent, DEEP_ANALYST_RESPONSE_SCHEMA } from "./deep-agent.js";
 
 const log = createLogger("agents");
@@ -102,6 +104,9 @@ async function deepAgenticRag(
   chatHistory?: string,
   onToken?: (chunk: string) => void,
 ): Promise<{ response: string; queryType: QueryType; docCount: number }> {
+  // 先确认真实知识库可用,再花 LLM 的钱;不可用时直接 503,而不是让模型自由发挥
+  await assertStoreReady();
+
   // 分类与 agent 并行;safeClassifyQuery 保证不会 reject
   const classifyPromise = safeClassifyQuery(input);
 
@@ -113,6 +118,7 @@ async function deepAgenticRag(
   let streamedText = "";
   let docCount = 0;
   let retrievalCalls = 0;
+  let retrievalFailures = 0;
 
   await Promise.all([
     (async () => {
@@ -125,16 +131,27 @@ async function deepAgenticRag(
     })(),
     (async () => {
       for await (const call of run.toolCalls) {
-        if (RETRIEVAL_TOOL_NAMES.has(call.name)) {
-          retrievalCalls += 1;
+        if (!RETRIEVAL_TOOL_NAMES.has(call.name)) continue;
+        try {
           const output = await call.output;
+          retrievalCalls += 1;
           docCount += countSourceDocs(output);
+        } catch (err) {
+          // 工具失败不能伪装成"没搜到":计数后由下方统一判定
+          retrievalFailures += 1;
+          log.error({ err, tool: call.name }, "Retrieval tool failed");
         }
       }
     })(),
   ]);
 
   const state = await run.output;
+
+  // 所有检索都失败 → 明确报错,而不是让"未检索到"的文案掩盖故障
+  if (retrievalFailures > 0 && retrievalCalls === 0) {
+    throw new VectorStoreError("知识库检索失败，请确认 ChromaDB 与索引状态后重试");
+  }
+
   const responseText = extractFinalText(state, streamedText);
   const queryType = await classifyPromise;
 
@@ -157,6 +174,8 @@ async function deepAgenticRag(
  * 解析失败时回退为文本结论(与旧管线 fallback 语义一致)。
  */
 async function deepDeepAnalysis(input: string): Promise<AnalysisResult> {
+  await assertStoreReady();
+
   const agent = buildDeepAnalystAgent();
   const result = await agent.invoke(
     { messages: [{ role: "user", content: input }] },

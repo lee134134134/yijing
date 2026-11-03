@@ -12,3 +12,6 @@
 /.claude/
 /.omo/run-continuation/
 .slim/deepwork/
+/coverage/
+/lee
+/lee.pub

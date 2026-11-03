@@ -32,6 +32,7 @@ export enum ErrorCode {
 
   // ── API (5xxx) ──
   INVALID_INPUT = "INVALID_INPUT",
+  UNAUTHORIZED = "UNAUTHORIZED",
   RATE_LIMITED = "RATE_LIMITED",
   NOT_FOUND = "NOT_FOUND",
 
@@ -96,6 +97,19 @@ export class StoreError extends YijingError {
   constructor(message: string, options?: { details?: Record<string, unknown>; cause?: unknown }) {
     super(ErrorCode.STORE_UNAVAILABLE, message, { statusCode: 500, ...options });
     this.name = "StoreError";
+  }
+}
+
+/**
+ * 向量库不可用(连接失败 / 集合缺失 / 未初始化)
+ *
+ * 与 RetrievalError 的区别:RetrievalError 表示"这次检索有问题",
+ * VectorStoreError 表示"整个向量库现在不可用",API 应返回 503。
+ */
+export class VectorStoreError extends YijingError {
+  constructor(message: string, options?: { details?: Record<string, unknown>; cause?: unknown; statusCode?: number }) {
+    super(ErrorCode.VECTOR_STORE_UNAVAILABLE, message, { statusCode: 503, ...options });
+    this.name = "VectorStoreError";
   }
 }
 

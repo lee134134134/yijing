@@ -115,6 +115,18 @@ export interface StatusResponse {
   chunkOverlap: number;
   /** 各角色的第三方模型路由(不含密钥) */
   llm?: LlmStatusEntry[];
+  /** 依赖健康状态:Chroma / Embedding / LLM */
+  health?: {
+    chroma: { ok: boolean; error?: string };
+    embedding: { ok: boolean; provider: string; model: string };
+    llm: { ok: boolean };
+  };
+  /** 当前索引信息 */
+  index?: {
+    collection: string;
+    exists: boolean;
+    docCount: number;
+  };
 }
 
 export interface ErrorResponse {

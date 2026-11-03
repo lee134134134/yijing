@@ -13,8 +13,10 @@ import swaggerUi from "@fastify/swagger-ui";
 import Fastify from "fastify";
 import { config } from "../config.js";
 import { assertConfig } from "../config-validation.js";
-import { ErrorCode, YijingError } from "../errors.js";
+import { getLlmStatus } from "../llm/factory.js";
 import { createLogger } from "../logger.js";
+import { getStoreHealth } from "../vectorstore/chroma.js";
+import { registerErrorHandler } from "./error-handler.js";
 import {
   authenticate,
   initAuth,
@@ -26,6 +28,7 @@ import { deepRoutes } from "./routes/deep.js";
 import { historyRoutes } from "./routes/history.js";
 import { queryRoutes } from "./routes/query.js";
 import { statusRoutes } from "./routes/status.js";
+import { readyResponseSchema } from "./schemas.js";
 
 const log = createLogger("api:server");
 
@@ -37,6 +40,8 @@ export async function buildServer() {
     logger: false,
     bodyLimit: config.maxBodySize,
     routerOptions: { maxParamLength: 200 },
+    // 默认不信任代理头;只有显式 TRUST_PROXY=true 时才使用 X-Forwarded-For
+    trustProxy: config.trustProxy,
   });
 
   // ── 响应压缩 ──
@@ -98,14 +103,19 @@ export async function buildServer() {
   server.addHook("onRequest", rateLimitMiddleware);
 
   // ── 认证钩子 ──
+  // 公开路径:健康检查、就绪检查、OpenAPI 文档;OPTIONS 预检交给 CORS
+  const publicPaths = new Set(["/health", "/ready"]);
+  const isPublicPath = (url: string): boolean => {
+    const path = url.split("?")[0] ?? "";
+    return publicPaths.has(path) || path === "/docs" || path.startsWith("/docs/");
+  };
   server.addHook("onRequest", (req, reply, done) => {
-    if (req.url === "/health") {
+    if (req.method === "OPTIONS" || isPublicPath(req.url)) {
       done();
       return;
     }
     if (!authenticate(req, reply)) {
-      reply.code(401).send(new YijingError(ErrorCode.INVALID_INPUT, "Invalid or missing API key").toJSON());
-      return;
+      return; // authenticate 已发送 401
     }
     done();
   });
@@ -127,6 +137,31 @@ export async function buildServer() {
     uptime: process.uptime(),
     timestamp: Date.now(),
   }));
+
+  // ── 就绪检查(真实探测 Chroma / LLM 配置) ──
+  server.get(
+    "/ready",
+    {
+      schema: {
+        tags: ["status"],
+        summary: "依赖就绪检查",
+        response: { 200: readyResponseSchema, 503: readyResponseSchema },
+      },
+    },
+    async (_req, reply) => {
+      const store = await getStoreHealth();
+      const llm = getLlmStatus();
+      const llmOk = llm.every((entry) => !entry.error);
+      const ready = store.ok && llmOk;
+      return reply.status(ready ? 200 : 503).send({
+        ready,
+        checks: {
+          chroma: store,
+          llm: { ok: llmOk, roles: llm },
+        },
+      });
+    },
+  );
 
   // ── 优雅关闭 ──
   const shutdown = async (signal: string) => {
@@ -151,14 +186,7 @@ export async function buildServer() {
   await server.register(statusRoutes, { prefix: "/api" });
 
   // ── 全局错误处理 ──
-  server.setErrorHandler((err, _req, reply) => {
-    if (err instanceof YijingError) {
-      log.warn({ err, code: err.code }, "Request error");
-      return reply.status(err.statusCode).send(err.toJSON());
-    }
-    log.error({ err }, "Unexpected error");
-    return reply.status(500).send(new YijingError(ErrorCode.INTERNAL, "Internal server error").toJSON());
-  });
+  registerErrorHandler(server);
 
   return server;
 }

@@ -37,7 +37,7 @@ async function buildApp(auth: AuthModule) {
 }
 
 describe("认证启用(apiKeys 非空)", () => {
-  it("无任何凭据 → 401 且 error.code=INVALID_INPUT", async () => {
+  it("无任何凭据 → 401 且 error.code=UNAUTHORIZED", async () => {
     const auth = await freshAuth(["secret-key-1"]);
     expect(auth.isAuthEnabled()).toBe(true);
     const app = await buildApp(auth);
@@ -45,7 +45,7 @@ describe("认证启用(apiKeys 非空)", () => {
     const res = await app.inject({ method: "GET", url: "/protected" });
 
     expect(res.statusCode).toBe(401);
-    expect(res.json()).toMatchObject({ error: { code: "INVALID_INPUT" } });
+    expect(res.json()).toMatchObject({ error: { code: "UNAUTHORIZED" } });
     await app.close();
   });
 

@@ -12,7 +12,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => ({
   collection: { query: vi.fn(), add: vi.fn(), count: vi.fn() },
-  client: { getOrCreateCollection: vi.fn(), deleteCollection: vi.fn(), listCollections: vi.fn() },
+  client: {
+    getOrCreateCollection: vi.fn(),
+    getCollection: vi.fn(),
+    deleteCollection: vi.fn(),
+    listCollections: vi.fn(),
+    heartbeat: vi.fn(),
+  },
 }));
 
 vi.mock("../logger.js", () => ({
@@ -62,8 +68,10 @@ describe("vectorstore/chroma 检索缓存", () => {
     vi.clearAllMocks();
     resetStore();
     h.client.getOrCreateCollection.mockResolvedValue(h.collection);
+    h.client.getCollection.mockResolvedValue(h.collection);
     h.client.deleteCollection.mockResolvedValue(undefined);
     h.client.listCollections.mockResolvedValue([]);
+    h.client.heartbeat.mockResolvedValue({});
     h.collection.query.mockResolvedValue(mockChromaResult());
     h.collection.add.mockResolvedValue(undefined);
     h.collection.count.mockResolvedValue(1);
@@ -108,11 +116,13 @@ describe("vectorstore/chroma 检索缓存", () => {
     expect(docs[0]?.metadata.domain).toBe("方剂");
   });
 
-  it("检索失败时降级为空数组且不写入缓存", async () => {
+  it("检索失败时抛 VECTOR_STORE_UNAVAILABLE,而不是伪装成空结果", async () => {
     h.collection.query.mockRejectedValue(new Error("chroma down"));
 
-    const first = await searchKnowledge("桂枝汤");
-    expect(first).toEqual([]);
+    await expect(searchKnowledge("桂枝汤")).rejects.toMatchObject({
+      code: "VECTOR_STORE_UNAVAILABLE",
+      statusCode: 503,
+    });
 
     // 恢复后重新检索应真正命中 ChromaDB(失败结果未被缓存)
     h.collection.query.mockResolvedValue(mockChromaResult());

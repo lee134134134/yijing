@@ -79,6 +79,47 @@ describe("extractSections", () => {
     expect(sections.length).toBeGreaterThanOrEqual(2);
   });
 
+  it("preserves H2 body when a short H3 follows (regression: 正文曾被丢弃)", () => {
+    const doc = makeDoc(`# 伤寒论
+
+## 桂枝汤证
+
+桂枝汤主之，太阳中风，阳浮而阴弱。
+
+### 煎服法
+
+以水七升，微火煮取三升。`);
+    const sections = extractSections(doc);
+
+    expect(sections).toHaveLength(1);
+    expect(sections[0]?.pageContent).toContain("桂枝汤主之");
+    expect(sections[0]?.metadata.h2).toBe("桂枝汤证");
+    expect(sections[0]?.metadata.h3).toBeUndefined();
+  });
+
+  it("splits a long H2 into intro + h3 sections without losing text", () => {
+    const body = "桂".repeat(320);
+    const doc = makeDoc(`# 本草
+
+## 上经
+
+${body}
+
+### 人参
+
+味甘，微寒。
+
+### 甘草
+
+味甘，平。`);
+    const sections = extractSections(doc);
+
+    expect(sections).toHaveLength(3);
+    expect(sections[0]?.pageContent).toContain(body);
+    expect(sections[1]?.metadata.h3).toBe("人参");
+    expect(sections[2]?.metadata.h3).toBe("甘草");
+  });
+
   it("filters empty/short sections under 10 chars", () => {
     const doc = makeDoc("# 标题\n\n## 空段\n\n");
 

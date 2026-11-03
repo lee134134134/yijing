@@ -47,6 +47,8 @@ COPY memory/ ./memory/
 # 运行时指向烘焙的模型缓存(独立于 /app/data,避免被 compose 的 ./data 挂载遮蔽)
 ENV EMBEDDING_CACHE_DIR=/app/model-cache
 ENV NODE_ENV=production
+# 容器内必须监听 0.0.0.0;compose 必须传 API_KEYS(非回环地址的启动前置条件)
+ENV API_HOST=0.0.0.0
 ENV CHROMA_DB_URL=http://chromadb:8000
 
 EXPOSE 3001

@@ -17,7 +17,7 @@
 import { Document } from "@langchain/core/documents";
 import { ChromaClient, type Collection, type Where } from "chromadb";
 import { config } from "../config.js";
-import { StoreError } from "../errors.js";
+import { StoreError, VectorStoreError } from "../errors.js";
 import { createLogger } from "../logger.js";
 import type { KnowledgeDocument, KnowledgeMetadata } from "../types.js";
 import { getEmbeddings } from "./embeddings.js";
@@ -63,7 +63,18 @@ type WhereFilter = Where;
 
 let _client: ChromaClient | null = null;
 let _collection: Collection | null = null;
-let _collectionInitialized = false;
+
+/** 就绪检查缓存:避免每个请求都打 3 次 Chroma(5s 内复用) */
+const HEALTH_TTL_MS = 5_000;
+let _healthCache: { at: number; ok: boolean; error?: string } | null = null;
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+function invalidateHealthCache(): void {
+  _healthCache = null;
+}
 
 /** ChromaDB metadata 仅支持标量类型 */
 function toScalarMetadata(meta: KnowledgeMetadata): Record<string, string> {
@@ -90,16 +101,30 @@ function getClient(): ChromaClient {
 }
 
 /**
- * 获取或创建集合(单例,不存在则自动创建)
+ * 获取集合
+ *
+ * - create=true:写入路径,不存在则创建
+ * - create=false:读取路径,不存在直接抛错,避免"自动建空集合 → 永远查不到"
  */
-async function getCollection(): Promise<Collection> {
-  if (!_collection) {
-    _collection = await getClient().getOrCreateCollection({
+async function getCollection(create: boolean = true): Promise<Collection> {
+  if (_collection) return _collection;
+
+  const client = getClient();
+  if (create) {
+    _collection = await client.getOrCreateCollection({
       name: config.chromaCollectionName,
     });
-    _collectionInitialized = true;
+    return _collection;
   }
-  return _collection;
+
+  try {
+    _collection = await client.getCollection({ name: config.chromaCollectionName });
+    return _collection;
+  } catch (err) {
+    throw new VectorStoreError(`知识库集合 "${config.chromaCollectionName}" 不存在，请先运行 npm run ingest 构建索引`, {
+      cause: err,
+    });
+  }
 }
 
 /**
@@ -148,7 +173,7 @@ export async function searchKnowledge(
   }
 
   try {
-    const collection = await getCollection();
+    const collection = await getCollection(false);
     const queryEmbedding = await getEmbeddings().embedQuery(query);
     const result = await collection.query({
       queryEmbeddings: [queryEmbedding],
@@ -167,8 +192,11 @@ export async function searchKnowledge(
     return docs;
   } catch (err) {
     log.error({ err, query }, "Search failed");
-    // 降级:返回空结果,由调用方处理(失败不入缓存)
-    return [];
+    if (err instanceof VectorStoreError) throw err;
+    throw new VectorStoreError("知识库检索失败，请确认 ChromaDB 与索引状态", {
+      cause: err,
+      details: { query },
+    });
   }
 }
 
@@ -184,7 +212,7 @@ export async function searchByDomain(
   topK: number = config.retrievalTopK,
 ): Promise<KnowledgeDocument[]> {
   try {
-    const collection = await getCollection();
+    const collection = await getCollection(false);
     const queryEmbedding = await getEmbeddings().embedQuery(query);
     const filter: WhereFilter = { domain: { $eq: domain } } as WhereFilter;
     const result = await collection.query({
@@ -203,7 +231,11 @@ export async function searchByDomain(
     return docs;
   } catch (err) {
     log.error({ err, query, domain }, "Domain search failed");
-    return [];
+    if (err instanceof VectorStoreError) throw err;
+    throw new VectorStoreError("知识库领域检索失败，请确认 ChromaDB 与索引状态", {
+      cause: err,
+      details: { query, domain },
+    });
   }
 }
 
@@ -291,8 +323,9 @@ export async function addDocumentsBatched(docs: KnowledgeDocument[], batchSize: 
       total += batch.length;
       log.info({ progress: `${total}/${docs.length}` }, "Batch written");
     }
-    // 知识库内容变更,失效检索缓存
+    // 知识库内容变更,失效检索缓存与健康缓存
     invalidateSearchCache();
+    invalidateHealthCache();
     return total;
   } catch (err) {
     log.error({ err }, "Failed to add documents");
@@ -317,25 +350,117 @@ export async function addDocuments(docs: KnowledgeDocument[]): Promise<number> {
  */
 export async function getDocumentCount(): Promise<number> {
   try {
-    const collection = await getCollection();
+    const collection = await getCollection(false);
     return await collection.count();
   } catch (err) {
     log.error({ err }, "Failed to get document count");
-    return 0;
+    if (err instanceof VectorStoreError) throw err;
+    throw new VectorStoreError("读取知识库文档数失败", { cause: err });
   }
 }
 
 /**
  * 列出 ChromaDB 中的所有集合
  *
- * 用于 CLI/TUI/API 的知识库状态检查。
+ * 失败时抛错而非返回空数组:空数组会让 /status 显示"没有集合",
+ * 与"Chroma 连不上"无法区分。
  */
 export async function listCollections(): Promise<string[]> {
   try {
     const collections = await getClient().listCollections();
     return collections.map((c) => c.name);
-  } catch {
-    return [];
+  } catch (err) {
+    throw new VectorStoreError("读取 ChromaDB 集合列表失败", { cause: err });
+  }
+}
+
+/** 知识库健康状态(不抛错,供 /status 与 /ready 使用) */
+export interface StoreHealth {
+  ok: boolean;
+  /** ChromaDB 服务是否可达 */
+  chroma: boolean;
+  /** 目标集合是否存在 */
+  collection: boolean;
+  docCount: number;
+  collections: string[];
+  error?: string;
+}
+
+/**
+ * 探测知识库健康状态
+ *
+ * ok 的定义:服务可达 + 集合存在 + 至少有 1 个文档。
+ * 集合为空视为"未构建索引",同样不是可用状态。
+ */
+export async function getStoreHealth(): Promise<StoreHealth> {
+  try {
+    await getClient().heartbeat();
+  } catch (err) {
+    return {
+      ok: false,
+      chroma: false,
+      collection: false,
+      docCount: 0,
+      collections: [],
+      error: errorMessage(err),
+    };
+  }
+
+  try {
+    const collections = await getClient().listCollections();
+    const names = collections.map((c) => c.name);
+    const exists = names.includes(config.chromaCollectionName);
+    const docCount = exists ? await getDocumentCount() : 0;
+    const ok = exists && docCount > 0;
+    return {
+      ok,
+      chroma: true,
+      collection: exists,
+      docCount,
+      collections: names,
+      ...(ok
+        ? {}
+        : {
+            error: exists
+              ? "知识库为空，请运行 npm run ingest 构建索引"
+              : `集合 "${config.chromaCollectionName}" 不存在，请运行 npm run ingest`,
+          }),
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      chroma: true,
+      collection: false,
+      docCount: 0,
+      collections: [],
+      error: errorMessage(err),
+    };
+  }
+}
+
+/**
+ * 查询前的就绪断言
+ *
+ * 在调用 LLM 之前快速失败,避免"知识库挂了但模型照样回答"。
+ * 结果缓存 5s,正常请求的成本可忽略。
+ */
+export async function assertStoreReady(): Promise<void> {
+  const now = Date.now();
+  if (_healthCache && now - _healthCache.at < HEALTH_TTL_MS) {
+    if (!_healthCache.ok) throw new VectorStoreError(_healthCache.error ?? "知识库当前不可用");
+    return;
+  }
+
+  const health = await getStoreHealth();
+  _healthCache = { at: now, ok: health.ok, ...(health.error ? { error: health.error } : {}) };
+  if (!health.ok) {
+    // 原始错误只进日志与 /ready,对外返回统一的可读文案
+    log.error({ error: health.error, collection: health.collection }, "Knowledge store not ready");
+    throw new VectorStoreError(
+      health.collection
+        ? "知识库当前不可用，请确认 ChromaDB 正在运行且索引已构建"
+        : "知识库索引尚未就绪，请先运行 npm run ingest",
+    );
   }
 }
 
@@ -348,8 +473,8 @@ export async function clearAll(): Promise<void> {
   try {
     await getClient().deleteCollection({ name: config.chromaCollectionName });
     _collection = null;
-    _collectionInitialized = false;
     invalidateSearchCache();
+    invalidateHealthCache();
     log.info("Collection deleted");
   } catch (err) {
     log.error({ err }, "Failed to clear collection");
@@ -364,6 +489,6 @@ export async function clearAll(): Promise<void> {
 export function resetStore(): void {
   _client = null;
   _collection = null;
-  _collectionInitialized = false;
   invalidateSearchCache();
+  invalidateHealthCache();
 }
