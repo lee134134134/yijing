@@ -267,7 +267,9 @@ echo "API_KEYS=$(openssl rand -hex 24)" >> .env
 docker-compose up -d
 ```
 
-Chroma 固定为 `chromadb/chroma:1.0`,健康检查使用 `/api/v2/heartbeat`;API 容器内置 Web 静态产物。
+Chroma 固定为 `chromadb/chroma:1.0.0`,持久化卷挂载 `/data`;API 健康检查使用 `/health`。容器内 LLM 通过 `host.docker.internal:11434` 访问宿主机 Ollama。
+
+> 本地默认模型:`.env` 使用 `LLM_PROVIDER=ollama` + `qwen2.5:7b`;启动前执行 `ollama serve` 与 `ollama pull qwen2.5:7b`。
 
 API 服务默认端口 `3001`，ChromaDB 默认端口 `8000`。
 

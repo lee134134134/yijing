@@ -14,10 +14,10 @@
 | 阶段 | 状态 | 说明 |
 |---|---|---|
 | P0 | ✅ 完成（2026-11-03，tag `p0-secure`） | 代码与测试完成；P0-1 的密钥轮换与 git 历史重写仍待人工 |
-| P1 | 🟡 代码完成（2026-11-03） | 引用数据化 / FTS5 混合检索 / 阈值 / 索引清单 / eval 已落地；待 Chroma 重建 + eval 标定；MMR、rerank 未做 |
+| P1 | ✅ 完成（2026-11-04） | 4086 块索引；eval recall@5 100%（16 条种子题）、无答案准确率 100%、MRR 0.806；MMR/rerank 未做 |
 | P2 | ✅ 代码完成（2026-11-03） | 会话/消息 schema v2、会话 API、SSE v2、abort/超时/检索预算、摘要中间件；单机版 |
 | P3 | ✅ 完成（2026-11-03） | React + Vite + Tailwind 前端；typecheck/build 通过，已由 Fastify 托管并做 SPA fallback |
-| P4 | 🟡 管线完成，语料部分完成 | `tools/pdf2md` + 台账 + QA；40 本中 12 本有文字层（279 章节），28 本需 OCR；向量 ingest 待 Chroma |
+| P4 | 🟡 核心语料完成 | core 11/11（含天机道 OCR）；reference 2/29 有文字层，其余 27 本按需 OCR；语料已入库 4086 块 |
 | P5 | ✅ 完成（2026-11-03） | Node 24、日志轮转、/metrics、Docker/CI、死代码清理 |
 
 ---

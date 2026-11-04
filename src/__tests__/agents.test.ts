@@ -36,6 +36,7 @@ vi.mock("../config.js", () => ({
     deepAgentMaxIterations: 25,
     requestTimeoutMs: 120_000,
     maxToolCalls: 6,
+    enablePrefetch: true,
     enableTodoPlanning: true,
     embeddingModel: "text-embedding-3-small",
     embeddingDimension: 1536,
@@ -126,10 +127,12 @@ function makeFakeRun(text: string, toolCalls: FakeToolCall[] = []) {
 import { buildDeepAgent, buildDeepAnalystAgent, resetDeepAgent } from "../agents/deep-agent.js";
 // ── SUT ──────────────────────────────────────────────────────────
 import { agenticRag, deepAnalysis } from "../agents/index.js";
+import { searchKnowledge } from "../vectorstore/chroma.js";
 
 beforeEach(() => {
   vi.clearAllMocks();
   resetDeepAgent();
+  vi.mocked(searchKnowledge).mockResolvedValue([]);
   vi.mocked(h.agent.streamEvents).mockResolvedValue(makeFakeRun("模拟 AI 回答"));
   vi.mocked(h.agent.invoke).mockResolvedValue({ messages: [{ content: "mock" }] });
 });
@@ -316,6 +319,23 @@ describe("agenticRag (deep mode)", () => {
 
     expect(result.docCount).toBe(1);
     expect(result.citations?.[0]).toMatchObject({ refId: "abcd1234", source: "a.md" });
+  });
+
+  it("uses prefetched citations when the model does not call tools", async () => {
+    vi.mocked(searchKnowledge).mockResolvedValue([
+      {
+        pageContent: "桂枝汤由桂枝、芍药、生姜、大枣、甘草组成。",
+        metadata: { source: "shanghanlun.md", domain: "伤寒论", h2: "桂枝汤" },
+      },
+    ]);
+    vi.mocked(h.agent.streamEvents).mockResolvedValue(makeFakeRun("桂枝汤由桂枝、芍药等组成。"));
+
+    const result = await agenticRag("桂枝汤的组成");
+
+    expect(result.docCount).toBe(1);
+    expect(result.citations?.[0]?.source).toBe("shanghanlun.md");
+    const firstMessage = h.agent.streamEvents.mock.calls[0]?.[0] as { messages: Array<{ role: string }> };
+    expect(firstMessage.messages[0]?.role).toBe("system");
   });
 
   it("records invalid ref ids without dropping the answer", async () => {

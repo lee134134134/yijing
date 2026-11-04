@@ -12,10 +12,16 @@ import { config } from "../config.js";
 import { VectorStoreError } from "../errors.js";
 import { createLogger } from "../logger.js";
 import { classifyQuery } from "../rag/chain.js";
-import { mergeCitations, parseCitedRefIds, parseToolCitations, validateCitations } from "../rag/citation.js";
-import { collectWithCitations } from "../rag/citation-collector.js";
+import {
+  buildCitedContext,
+  mergeCitations,
+  parseCitedRefIds,
+  parseToolCitations,
+  validateCitations,
+} from "../rag/citation.js";
+import { collectWithCitations, getCitationCollector } from "../rag/citation-collector.js";
 import type { AnalysisResult, Citation, QueryResult, QueryType } from "../types.js";
-import { assertStoreReady } from "../vectorstore/chroma.js";
+import { assertStoreReady, searchKnowledge } from "../vectorstore/chroma.js";
 import { buildDeepAgent, buildDeepAnalystAgent, DEEP_ANALYST_RESPONSE_SCHEMA } from "./deep-agent.js";
 
 const log = createLogger("agents");
@@ -128,8 +134,28 @@ async function deepAgenticRag(
 
   const { result, citations } = await collectWithCitations<AgentRunOutcome>(
     async () => {
+      // 预检索:小模型经常不主动调用工具;先把 topK 片段注入上下文,
+      // 保证回答有可验证来源。Agent 仍可继续调用工具补充细节。
+      let prefetchMessages: Array<{ role: "system"; content: string }> = [];
+      if (config.enablePrefetch) {
+        const prefetched = await searchKnowledge(input, config.retrievalTopK);
+        const cited = buildCitedContext(prefetched);
+        if (cited.citations.length > 0) {
+          getCitationCollector()?.addAll(cited.citations);
+          prefetchMessages = [
+            {
+              role: "system",
+              content:
+                "以下是系统预检索到的知识库片段,回答必须优先基于这些片段,并使用其中的 [ref:<id>] 标注来源;" +
+                "如果片段不足以回答,明确说明知识库无此内容,不要编造。\n\n" +
+                cited.context,
+            },
+          ];
+        }
+      }
+
       const run = await agent.streamEvents(
-        { messages },
+        { messages: [...prefetchMessages, ...messages] },
         {
           version: "v3",
           recursionLimit: config.deepAgentMaxIterations,
@@ -269,8 +295,30 @@ async function deepDeepAnalysis(input: string): Promise<AnalysisResult> {
 
   const agent = buildDeepAnalystAgent();
   const { result, citations } = await collectWithCitations(
-    () =>
-      agent.invoke({ messages: [{ role: "user", content: input }] }, { recursionLimit: config.deepAgentMaxIterations }),
+    async () => {
+      // 预检索:确保 deep 分析有可校验的引用来源
+      let prefetchMessages: Array<{ role: "system"; content: string }> = [];
+      if (config.enablePrefetch) {
+        const prefetched = await searchKnowledge(input, config.retrievalTopK);
+        const cited = buildCitedContext(prefetched);
+        if (cited.citations.length > 0) {
+          getCitationCollector()?.addAll(cited.citations);
+          prefetchMessages = [
+            {
+              role: "system",
+              content:
+                "以下是系统预检索到的知识库片段,references 只能引用这些片段中的来源,并标注 [ref:<id>]。\n\n" +
+                cited.context,
+            },
+          ];
+        }
+      }
+
+      return agent.invoke(
+        { messages: [...prefetchMessages, { role: "user", content: input }] },
+        { recursionLimit: config.deepAgentMaxIterations },
+      );
+    },
     { maxToolCalls: config.maxToolCalls },
   );
 

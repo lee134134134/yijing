@@ -170,6 +170,8 @@ export const config = {
   requestTimeoutMs: parseInt(process.env.REQUEST_TIMEOUT_MS || "120000", 10),
   /** 单次请求最多检索调用次数(成本闸门) */
   maxToolCalls: parseInt(process.env.MAX_TOOL_CALLS || "6", 10),
+  /** 是否在 Agent 运行前预检索 topK(小模型不主动调工具时保证有来源) */
+  enablePrefetch: process.env.ENABLE_PREFETCH !== "false",
 
   // ── Embedding ──
   /**

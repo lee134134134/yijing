@@ -4,15 +4,10 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - chroma_data:/chroma/chroma
+      - chroma_data:/data
     environment:
       - IS_PERSISTENT=TRUE
-      - PERSIST_DIRECTORY=/chroma/chroma
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v2/heartbeat"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      - PERSIST_DIRECTORY=/data
     restart: unless-stopped
 
   api:
@@ -27,13 +22,25 @@ services:
       - API_KEYS=${API_KEYS:?set API_KEYS in .env before docker compose up}
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.openai.com/v1}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - LLM_MODEL=${LLM_MODEL:-gpt-4o-mini}
+      - LLM_MODEL=${LLM_MODEL:-qwen2.5:7b}
+      - DEEP_MODEL=${DEEP_MODEL:-qwen2.5:7b}
+      - LLM_PROVIDER=custom
+      - LLM_BASE_URL=http://host.docker.internal:11434/v1
+      - LLM_API_KEY=not-required
+      - LLM_TIMEOUT_MS=180000
+      - LLM_DEEP_JSON_MODE=off
+      - ENABLE_TODO_PLANNING=false
+      - REQUEST_TIMEOUT_MS=300000
+      - MIN_SCORE=0.5
+      - ENABLE_HYBRID=true
       - CHROMA_DB_URL=http://chromadb:8000
       - CORS_ORIGIN=http://localhost:5173
       - LOG_LEVEL=info
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       chromadb:
-        condition: service_healthy
+        condition: service_started
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
