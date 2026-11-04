@@ -29,6 +29,8 @@ npm run tui
 npx tsx src/index.ts "桂枝汤的组成和适应症是什么？"
 ```
 
+> 若 `3001` 被其他项目占用，设置 `API_PORT=3011`（Docker 部署已默认映射到 `3011`）。
+
 ## 配置
 
 编辑 `.env` 文件或设置环境变量：
@@ -264,14 +266,15 @@ npm run lint && npm run format && npm run typecheck:web
 ```bash
 # 必须设置服务访问密钥(容器监听 0.0.0.0)
 echo "API_KEYS=$(openssl rand -hex 24)" >> .env
-docker-compose up -d
+docker compose up -d
+# Web/API: http://localhost:3011
 ```
 
 Chroma 固定为 `chromadb/chroma:1.0.0`,持久化卷挂载 `/data`;API 健康检查使用 `/health`。容器内 LLM 通过 `host.docker.internal:11434` 访问宿主机 Ollama。
 
 > 本地默认模型:`.env` 使用 `LLM_PROVIDER=ollama` + `qwen2.5:7b`;启动前执行 `ollama serve` 与 `ollama pull qwen2.5:7b`。
 
-API 服务默认端口 `3001`，ChromaDB 默认端口 `8000`。
+Docker 宿主端口为 `3011`（容器内仍是 3001，避免与本机其他项目冲突）；本机 `npm run server` 默认 3001，可用 `API_PORT` 覆盖。ChromaDB 默认端口 `8000`。
 
 ## 领域合规
 

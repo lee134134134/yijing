@@ -15,7 +15,7 @@ services:
       context: .
       dockerfile: Dockerfile
     ports:
-      - "3001:3001"
+      - "3011:3001"
     environment:
       - NODE_ENV=production
       - API_HOST=0.0.0.0
