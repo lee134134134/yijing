@@ -20,3 +20,6 @@
 
 # OCR compiled binary
 /tools/ocr/ocr
+
+# 个人信息文件（合规要求：不得写入 commit）
+/memory/jiapu.md
